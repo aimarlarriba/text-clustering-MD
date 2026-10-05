@@ -1,0 +1,55 @@
+# ==============================================================================
+# PROTECCIÓN DE DATOS CONFIDENCIALES (NDA / Acuerdo Ético de Investigación)
+# ==============================================================================
+# Ningún dato de pacientes/usuarios ni subproducto de datos debe rastrearse en Git.
+data/
+data_processed/
+downloads/
+raw_data/
+*.csv
+*.tsv
+*.xlsx
+*.parquet
+*.json
+*.zip
+*.tar.gz
+
+# ==============================================================================
+# MODELOS Y ARTEFACTOS SERIALIZADOS PESADOS
+# ==============================================================================
+*.pkl
+*.pickle
+*.joblib
+*.pt
+*.bin
+*.safetensors
+*.onnx
+models/
+embeddings/
+
+# ==============================================================================
+# ENTORNOS VIRTUALES Y VARIABLES DE CONFIGURACIÓN
+# ==============================================================================
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# ==============================================================================
+# PYTHON Y CACHÉ
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+
+# ==============================================================================
+# IDEs Y SISTEMA OPERATIVO
+# ==============================================================================
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
