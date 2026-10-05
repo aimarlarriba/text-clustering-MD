@@ -1,0 +1,12 @@
+# Datos
+data/
+
+# Modelos y archivos binarios
+*.pkl
+
+# Configuración del IDE (PyCharm)
+.idea/
+
+# Caché de Python
+__pycache__/
+*.pyc
