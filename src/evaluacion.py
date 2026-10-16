@@ -5,6 +5,17 @@ from scipy.cluster.hierarchy import fcluster
 
 
 def calcular_metricas_externas(etiquetas_reales, etiquetas_predichas):
+    """
+        Calcula métricas de evaluación externa (Rand Index, Jaccard, Fowlkes-Mallows) desde cero (Scratch).
+
+        Pre-condiciones:
+            - etiquetas_reales: array-like 1D de tamaño N con las clases reales (Ground-Truth).
+            - etiquetas_predichas: array-like 1D de tamaño N con los clusters asignados por el modelo.
+            - len(etiquetas_reales) == len(etiquetas_predichas) > 0.
+
+        Post-condiciones:
+            - Devuelve un diccionario con las tres métricas calculadas en el rango [0, 1].
+        """
     n = len(etiquetas_reales)
     n11 = n00 = n10 = n01 = 0
 
@@ -50,6 +61,38 @@ def visualizar_pca_clusters(vectores_densos, etiquetas_predichas):
     plt.show()
 
 
+def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_entrenamiento, textos_entrenamiento,
+                               k=3):
+    """
+    Asigna un nuevo post a un cluster y muestra por pantalla los textos más similares.
+
+    Pre-condiciones:
+        - vector_nuevo: numpy array 1D de tamaño D (dimensión del embedding).
+        - vectores_entrenamiento: numpy matrix de tamaño (N, D).
+        - etiquetas_entrenamiento: numpy array 1D de tamaño N.
+        - textos_entrenamiento: lista de strings de tamaño N con los posts originales.
+        - k: entero > 0, número de textos similares a mostrar.
+
+    Post-condiciones:
+        - Imprime los K textos más cercanos y sus distancias.
+        - Devuelve un int/string con la etiqueta del cluster asignado.
+    """
+    # 1. Calcular la distancia euclídea entre el nuevo post y todos los de entrenamiento
+    distancias = np.linalg.norm(vectores_entrenamiento - vector_nuevo, axis=1)
+
+    # 2. Obtener los índices de los 'k' posts con menor distancia (los más cercanos)
+    indices_cercanos = np.argsort(distancias)[:k]
+
+    # 3. Asignar el cluster basado en el vecino más cercano (1-NN)
+    cluster_asignado = etiquetas_entrenamiento[indices_cercanos[0]]
+
+    # 4. Mostrar los textos originales por consola
+    print(f"\n--- NUEVO POST ASIGNADO AL CLUSTER: {cluster_asignado} ---")
+    print(f"Los {k} posts del corpus más semánticamente parecidos son:")
+    for i, idx in enumerate(indices_cercanos):
+        print(f"  {i + 1}. [Distancia: {distancias[idx]:.4f}] -> \"{textos_entrenamiento[idx]}\"")
+
+    return cluster_asignado
 # --- BLOQUE DE PRUEBA ---
 if __name__ == "__main__":
     print("Iniciando prueba del módulo...")
