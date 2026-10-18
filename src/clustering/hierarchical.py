@@ -1,5 +1,6 @@
 import numpy as np
 import time
+from src.clustering.lance_williams import actualizar_matriz_lance_williams
 
 class MotorJerarquico:
     """
@@ -13,10 +14,11 @@ class MotorJerarquico:
         
         :param tipo_enlace: Criterio de enlace a usar: 'single' (min) o 'complete' (max).
         """
-        if tipo_enlace not in ["single", "complete"]:
-            raise ValueError("El tipo_enlace debe ser 'single' o 'complete'")
+        if tipo_enlace not in ["single", "complete", "average"]:
+            raise ValueError("El tipo_enlace debe ser 'single', 'complete' o 'average'")
         self.tipo_enlace = tipo_enlace
         self.linkage_matrix = None
+        self._tamanos_lw = None
 
     def fit(self, matriz_distancias):
         """
@@ -81,4 +83,10 @@ class MotorJerarquico:
         
         Aquí implementarás las ecuaciones de Single-link (min) y Complete-link (max).
         """
-        pass
+        if self._tamanos_lw is None or max(self._tamanos_lw.values()) >= matriz_distancias.shape[0]:
+            self._tamanos_lw = {i: 1 for i in range(matriz_distancias.shape[0])}
+        actualizar_matriz_lance_williams(
+            matriz_distancias, cluster1, cluster2, self.tipo_enlace, self._tamanos_lw
+        )
+
+        
