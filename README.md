@@ -8,3 +8,6 @@
 
 **Sokal, R. R., & Rohlf, F. J. (1962). "The comparison of dendrograms by objective methods".**
   - La métrica más adecuada para el clustering jerárquico es el coeficiente cofenético
+
+**Aggarwal, C. C., Hinneburg, A., & Keim, D. A. (2001). "On the surprising behavior of distance metrics in high dimensional space" (ICTD)**
+  -  Distancia euclídea pierde contraste en espacios de alta dimensión y la distancia del coseno es mejor para medir la similitud semántica
