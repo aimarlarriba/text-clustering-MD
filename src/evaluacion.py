@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from scipy.cluster.hierarchy import fcluster
+from src.metricas_internas import calcular_cpcc_scratch, calcular_silhouette_scratch
 
 
 def calcular_metricas_externas(etiquetas_reales, etiquetas_predichas):
