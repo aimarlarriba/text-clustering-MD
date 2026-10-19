@@ -104,8 +104,8 @@ if __name__ == "__main__":
 
     print("Iniciando evaluación con datos reales...")
 
-    # 1. CARGAR LOS DATOS PROCESADOS POR AIMAR
-    # Buscamos la carpeta 'data_processed' que crea el pipeline de Aimar
+    # 1. CARGAR LOS DATOS PROCESADOS
+    # Buscamos la carpeta 'data_processed' generada por el pipeline
     carpeta_raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     carpeta_datos = os.path.join(carpeta_raiz, "data_processed")
 
@@ -124,10 +124,10 @@ if __name__ == "__main__":
         print(f"¡Éxito! {len(textos_reales)} posts cargados correctamente.")
     except FileNotFoundError:
         print(
-            "Error: No se encuentran los datos. Dile a Aimar que ejecute su 'pipeline_aimar.py' primero o asegúrate de haber hecho un Git Pull.")
+            "Error: No se encuentran los datos. Ejecuta primero 'pipeline.py' para procesar los textos y generar los archivos en 'data_processed/'.")
         exit()
 
-    # 2. GENERAR EL CLUSTERING (Parte de Urko)
+    # 2. GENERAR EL CLUSTERING JERÁRQUICO
     # import sys
     # sys.path.append(carpeta_raiz)
     # from src.clustering.hierarchical import hacer_clustering
@@ -135,7 +135,7 @@ if __name__ == "__main__":
     # print("Calculando matriz de enlaces (Linkage)...")
     # matriz_linkage = hacer_clustering(vectores_densos)
 
-    # 3. TU PARTE: CORTAR EL ÁRBOL Y EVALUAR
+    # 3. CORTAR EL ÁRBOL Y EVALUAR
     # print("Cortando dendrograma...")
     # altura_h = 2.0  # <- Ajustaréis este valor al ver el dendrograma
 

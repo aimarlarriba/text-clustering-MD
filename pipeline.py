@@ -1,13 +1,16 @@
 """
-Pipeline de preparación de datos y matrices de distancias (Aimar).
-Genera embeddings contextuales con SBERT y matrices de distancia (Scratch)
-para el resto de compañeros del equipo (Urko, Adrián, María).
+Descripción:
+    Pipeline integral que carga el corpus clínico de Reddit (Zenodo C-SSRS),
+    genera representaciones densas contextuales mediante Sentence-BERT (all-MiniLM-L6-v2),
+    calcula las matrices de distancias Coseno y Euclídea desde cero (Scratch en NumPy),
+    evalúa formalmente el contraste métrico (Aggarwal et al., 2001) y perfila el coste computacional.
 """
 
 import os
 import time
 import json
 import argparse
+from typing import Tuple, List, Any
 import numpy as np
 import pandas as pd
 
@@ -21,10 +24,16 @@ from src.embeddings import (
 )
 
 
-def limpiar_texto_post(post_raw):
+def limpiar_texto_post(post_raw: Any) -> str:
     """
-    En el dataset de Zenodo, la columna Post contiene una lista en formato string: "['post1', 'post2']".
-    Esta función extrae y concatena todos los textos del usuario en un único string limpio.
+    Extrae y unifica las publicaciones textuales de un usuario en un único string limpio.
+    En el corpus de Zenodo, los posts múltiples se almacenan como una lista serializada en texto.
+
+    Pre-condiciones:
+        - post_raw: objeto convertible a string o representación literal de lista con los textos del post.
+
+    Post-condiciones:
+        - Devuelve un string no vacío con el contenido textual concatenado y normalizado.
     """
     import ast
     if isinstance(post_raw, str) and post_raw.strip().startswith("["):
@@ -37,17 +46,17 @@ def limpiar_texto_post(post_raw):
     return str(post_raw).strip()
 
 
-def cargar_datos(ruta_csv="data/500_Reddit_users_posts_labels.csv", n_muestras=500):
+def cargar_datos(ruta_csv: str = "data/500_Reddit_users_posts_labels.csv", n_muestras: int = 500) -> Tuple[List[str], np.ndarray]:
     """
-    Carga el dataset real de Zenodo (500_Reddit_users_posts_labels.csv).
+    Carga el dataset clínico real de Zenodo (500_Reddit_users_posts_labels.csv).
 
     Pre-condiciones:
         - ruta_csv: ruta al archivo CSV existente con los datos reales.
-        - n_muestras: número máximo de usuarios a procesar.
+        - n_muestras: número máximo de usuarios a procesar (por defecto 500).
 
     Post-condiciones:
         - Devuelve una tupla (textos, etiquetas) donde textos es una lista de strings
-          y etiquetas es un array NumPy con las clases de riesgo [0..4].
+          y etiquetas es un array NumPy con las clases de riesgo C-SSRS [0..4].
     """
     if not os.path.exists(ruta_csv):
         print(f"\n[AVISO] No se encontró el dataset en '{ruta_csv}'.")
@@ -96,7 +105,7 @@ def cargar_datos(ruta_csv="data/500_Reddit_users_posts_labels.csv", n_muestras=5
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Pipeline de embeddings y distancias (Aimar)")
+    parser = argparse.ArgumentParser(description="Pipeline de embeddings y matrices de proximidad")
     parser.add_argument(
         "--csv",
         type=str,
@@ -110,7 +119,7 @@ def main():
 
     os.makedirs(args.salida, exist_ok=True)
 
-    print("=== Pipeline de Embeddings y Matrices de Distancia (Aimar) ===")
+    print("=== Pipeline de Embeddings y Matrices de Proximidad ===")
 
     # 1. Cargar textos
     textos, etiquetas_reales = cargar_datos(args.csv, args.n_muestras)
@@ -161,7 +170,7 @@ def main():
     with open(os.path.join(args.salida, "metricas_espacios_y_profiling.json"), "w", encoding="utf-8") as f:
         json.dump(informe_cuantitativo, f, ensure_ascii=False, indent=2)
 
-    # 6. Guardar archivos para Urko, Adrián y María
+    # 6. Guardar archivos serializados para las fases de clustering y evaluación
     print("Guardando archivos serializados...")
     guardar_embeddings(X, os.path.join(args.salida, "embeddings_sbert.npy"))
     guardar_matriz_distancias(D_cos, os.path.join(args.salida, "matriz_distancias_cosine.npy"))

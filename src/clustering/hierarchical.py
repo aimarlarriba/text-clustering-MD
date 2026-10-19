@@ -5,7 +5,6 @@ from src.clustering.lance_williams import actualizar_matriz_lance_williams
 class MotorJerarquico:
     """
     Motor Jerárquico Aglomerativo (SAHN) implementado desde cero.
-    Desarrollado por: Urko
     """
 
     def __init__(self, tipo_enlace="single"):
