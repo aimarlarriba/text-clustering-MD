@@ -209,8 +209,17 @@ def comparar_espacios_metricos(
     ruta_grafico: str = None
 ) -> dict:
     """
-    Calcula estadísticos descriptivos y genera un gráfico comparativo de
-    las distancias Coseno y Euclídea para la memoria de prácticas.
+    Calcula estadísticos descriptivos, métricas formales de contraste dimensional
+    (Aggarwal et al., 2001) y la verificación experimental de la relación matemática
+    d_E = sqrt(2 * d_cos) derivada de la normalización L2 unitaria.
+
+    Pre-condiciones:
+        - X: matriz (N, D) de embeddings.
+        - D_coseno, D_euclidea: matrices simétricas (N, N) con diagonal 0.
+        - ruta_grafico: opcional, ruta para guardar el gráfico comparativo.
+
+    Post-condiciones:
+        - Devuelve un diccionario con estadísticas, contraste relativo y error teórico.
     """
     N = D_coseno.shape[0]
     filas, cols = np.triu_indices(N, k=1)
@@ -218,40 +227,60 @@ def comparar_espacios_metricos(
     cos_pares = D_coseno[filas, cols]
     euc_pares = D_euclidea[filas, cols]
 
+    cos_min = float(np.min(cos_pares))
+    cos_max = float(np.max(cos_pares))
+    euc_min = float(np.min(euc_pares))
+    euc_max = float(np.max(euc_pares))
+
+    # Contraste relativo (Relative Contrast - Aggarwal et al., 2001)
+    # C_R = (dist_max - dist_min) / dist_min
+    contraste_cos = (cos_max - cos_min) / (cos_min if cos_min > 0 else 1e-6)
+    contraste_euc = (euc_max - euc_min) / (euc_min if euc_min > 0 else 1e-6)
+
+    # Verificación empírica de la identidad formal: d_E = sqrt(2 * d_cos) si ||u|| = 1
+    # ||u - v||^2 = ||u||^2 + ||v||^2 - 2(u · v) = 2 - 2*cos_sim = 2 * d_cos
+    euc_teorica = np.sqrt(2.0 * np.clip(cos_pares, 0.0, 2.0))
+    error_teorico_max = float(np.max(np.abs(euc_pares - euc_teorica)))
+    error_teorico_medio = float(np.mean(np.abs(euc_pares - euc_teorica)))
+
     stats = {
         "n_muestras": N,
         "n_pares": len(cos_pares),
         "cos_media": float(np.mean(cos_pares)),
         "cos_std": float(np.std(cos_pares)),
-        "cos_min": float(np.min(cos_pares)),
-        "cos_max": float(np.max(cos_pares)),
+        "cos_min": cos_min,
+        "cos_max": cos_max,
+        "cos_contraste_relativo": float(contraste_cos),
         "euc_media": float(np.mean(euc_pares)),
         "euc_std": float(np.std(euc_pares)),
-        "euc_min": float(np.min(euc_pares)),
-        "euc_max": float(np.max(euc_pares)),
-        "corr_pearson": float(np.corrcoef(cos_pares, euc_pares)[0, 1])
+        "euc_min": euc_min,
+        "euc_max": euc_max,
+        "euc_contraste_relativo": float(contraste_euc),
+        "corr_pearson": float(np.corrcoef(cos_pares, euc_pares)[0, 1]),
+        "error_formal_max_euc_sqrt2cos": error_teorico_max,
+        "error_formal_medio_euc_sqrt2cos": error_teorico_medio,
     }
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
 
     # 1. Distribución Coseno
     axes[0].hist(cos_pares, bins=35, color="#2b5c8f", edgecolor="white", alpha=0.85)
-    axes[0].set_title("Distribución Distancia Coseno")
+    axes[0].set_title(f"Distancia Coseno (C_R={contraste_cos:.2f})")
     axes[0].set_xlabel("d_cos(u, v)")
     axes[0].set_ylabel("Frecuencia")
     axes[0].grid(True, linestyle="--", alpha=0.4)
 
     # 2. Distribución Euclídea
     axes[1].hist(euc_pares, bins=35, color="#d95f02", edgecolor="white", alpha=0.85)
-    axes[1].set_title("Distribución Distancia Euclídea")
+    axes[1].set_title(f"Distancia Euclídea (C_R={contraste_euc:.2f})")
     axes[1].set_xlabel("d_E(u, v)")
     axes[1].grid(True, linestyle="--", alpha=0.4)
 
-    # 3. Dispersión Coseno vs Euclídea (submuestreo si hay muchos pares)
+    # 3. Dispersión Coseno vs Euclídea
     n_puntos = min(1500, len(cos_pares))
     idx = np.random.choice(len(cos_pares), size=n_puntos, replace=False)
     axes[2].scatter(cos_pares[idx], euc_pares[idx], alpha=0.35, color="#2ca02c", s=12)
-    axes[2].set_title(f"Relación Coseno vs Euclídea (r = {stats['corr_pearson']:.3f})")
+    axes[2].set_title(f"Relación Coseno vs Euclídea (r = {stats['corr_pearson']:.4f})")
     axes[2].set_xlabel("Distancia Coseno")
     axes[2].set_ylabel("Distancia Euclídea")
     axes[2].grid(True, linestyle="--", alpha=0.4)
@@ -267,6 +296,52 @@ def comparar_espacios_metricos(
 
     plt.close(fig)
     return stats
+
+
+def perfilar_coste_computacional(X: np.ndarray, lista_n=(100, 200, 300, 400, 500)) -> list:
+    """
+    Aporta evidencias cuantitativas del coste computacional (tiempo en segundos
+    y memoria en MB) al calcular las matrices de distancia NxN para demostrar
+    empíricamente la complejidad O(N^2 * D).
+
+    Pre-condiciones:
+        - X: matriz (N, D) con N >= max(lista_n).
+        - lista_n: iterable de tamaños de muestra crecientes a evaluar.
+
+    Post-condiciones:
+        - Devuelve una lista de diccionarios con el profiling de tiempo y memoria.
+    """
+    import time
+    resultados = []
+    N_total, D = X.shape
+
+    for n in lista_n:
+        if n > N_total:
+            continue
+        sub_X = X[:n]
+
+        # Tiempo Coseno
+        t0 = time.perf_counter()
+        _ = calcular_matriz_distancias_scratch(sub_X, metrica="cosine")
+        t_cos = time.perf_counter() - t0
+
+        # Tiempo Euclídea
+        t0 = time.perf_counter()
+        _ = calcular_matriz_distancias_scratch(sub_X, metrica="euclidean")
+        t_euc = time.perf_counter() - t0
+
+        # Memoria teórica de la matriz (float32 = 4 bytes)
+        memoria_mb = (n * n * 4) / (1024 * 1024)
+
+        resultados.append({
+            "N": n,
+            "Dimension_D": D,
+            "Tiempo_Coseno_seg": round(t_cos, 5),
+            "Tiempo_Euclidea_seg": round(t_euc, 5),
+            "Memoria_Matriz_MB": round(memoria_mb, 4)
+        })
+
+    return resultados
 
 
 # --- BLOQUE DE PRUEBA ---
