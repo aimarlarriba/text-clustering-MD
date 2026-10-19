@@ -94,16 +94,58 @@ def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_e
         print(f"  {i + 1}. [Distancia: {distancias[idx]:.4f}] -> \"{textos_entrenamiento[idx]}\"")
 
     return cluster_asignado
-# --- BLOQUE DE PRUEBA ---
-if __name__ == "__main__":
-    print("Iniciando prueba del módulo...")
-    # Simulamos 50 vectores de 384 dimensiones (como los que hará Aimar)
-    vectores_mock = np.random.rand(50, 384)
-    # Simulamos etiquetas aleatorias (5 clases como en vuestro README)
-    reales_mock = np.random.randint(0, 5, size=50)
-    predicciones_mock = np.random.randint(0, 5, size=50)
 
-    resultados = calcular_metricas_externas(reales_mock, predicciones_mock)
-    print("Cálculo de métricas:", resultados)
-    print("Abriendo gráfico PCA...")
-    visualizar_pca_clusters(vectores_mock, predicciones_mock)
+
+# --- BLOQUE DE EJECUCIÓN CON DATOS REALES ---
+if __name__ == "__main__":
+    import os
+    import json
+    import numpy as np
+
+    print("Iniciando evaluación con datos reales...")
+
+    # 1. CARGAR LOS DATOS PROCESADOS POR AIMAR
+    # Buscamos la carpeta 'data_processed' que crea el pipeline de Aimar
+    carpeta_raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    carpeta_datos = os.path.join(carpeta_raiz, "data_processed")
+
+    ruta_embeddings = os.path.join(carpeta_datos, "embeddings_sbert.npy")
+    ruta_etiquetas = os.path.join(carpeta_datos, "etiquetas_reales.npy")
+    ruta_textos = os.path.join(carpeta_datos, "textos_posts.json")
+
+    try:
+        print("Cargando embeddings, textos y etiquetas guardados...")
+        vectores_densos = np.load(ruta_embeddings)
+        etiquetas_reales = np.load(ruta_etiquetas)
+
+        with open(ruta_textos, "r", encoding="utf-8") as f:
+            textos_reales = json.load(f)
+
+        print(f"¡Éxito! {len(textos_reales)} posts cargados correctamente.")
+    except FileNotFoundError:
+        print(
+            "Error: No se encuentran los datos. Dile a Aimar que ejecute su 'pipeline_aimar.py' primero o asegúrate de haber hecho un Git Pull.")
+        exit()
+
+    # 2. GENERAR EL CLUSTERING (Parte de Urko)
+    # import sys
+    # sys.path.append(carpeta_raiz)
+    # from src.clustering.hierarchical import hacer_clustering
+
+    # print("Calculando matriz de enlaces (Linkage)...")
+    # matriz_linkage = hacer_clustering(vectores_densos)
+
+    # 3. TU PARTE: CORTAR EL ÁRBOL Y EVALUAR
+    # print("Cortando dendrograma...")
+    # altura_h = 2.0  # <- Ajustaréis este valor al ver el dendrograma
+
+    # predicciones = cortar_arbol(matriz_linkage, altura_h)
+
+    # resultados = calcular_metricas_externas(etiquetas_reales, predicciones)
+    # print("Métricas finales:", resultados)
+
+    # print("Abriendo gráfico PCA real...")
+    # visualizar_pca_clusters(vectores_densos, predicciones)
+
+    # print("Probando inferencia con el primer texto del corpus...")
+    # inferir_y_mostrar_cercanos(vectores_densos[0], vectores_densos, predicciones, textos_reales, k=3)
