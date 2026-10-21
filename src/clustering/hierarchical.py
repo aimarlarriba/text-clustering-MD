@@ -11,64 +11,69 @@ class MotorJerarquico:
         """
         Inicializa el motor de clustering.
         
-        :param tipo_enlace: Criterio de enlace a usar: 'single' (min) o 'complete' (max).
+        :param tipo_enlace: Criterio de enlace a usar: 'single' (min), 'complete' (max) o 'average' (promedio).
         """
         if tipo_enlace not in ["single", "complete", "average"]:
             raise ValueError("El tipo_enlace debe ser 'single', 'complete' o 'average'")
         self.tipo_enlace = tipo_enlace
         self.linkage_matrix = None
-        self._tamanos_lw = None
 
     def fit(self, matriz_distancias):
         """
         Ejecuta el algoritmo aglomerativo iterativo sobre una matriz de distancias precalculada.
         
-        :param matriz_distancias: Matriz cuadrada de distancias (N x N)
-        :return: linkage_matrix de tamaño (N-1, 4)
+        :param matriz_distancias: Matriz cuadrada de distancias (N x N).
+        :return: linkage_matrix de tamaño (N-1, 4) en formato estándar compatible con SciPy.
         """
-        # TODO: Implementar el bucle iterativo:
-        # 1. Inicializar N clusters unitarios.
-        # 2. Encontrar los dos clusters i, j más cercanos (minima distancia en la matriz, ignorando la diagonal 0).
-        # 3. Fusionar i y j creando un nuevo cluster.
-        # 4. Actualizar la matriz de distancias según el criterio (Single-link o Complete-link).
-        # 5. Guardar la fusión en self.linkage_matrix: [idx1, idx2, dist, n_muestras].
-        # 6. Repetir hasta que quede 1 solo cluster.
-
-        # Inicio del profiling de tiempo
         start_time = time.time()
         
-        N = matriz_distancias.shape[0]
-        self.linkage_matrix = np.zeros((N - 1, 4))
+        # 1. Copia de trabajo para no destruir los datos originales
+        D = np.array(matriz_distancias, dtype=float, copy=True)
+        N = D.shape[0]
         
-        # Llevaremos la cuenta del tamaño de cada cluster para la columna 4.
-        # Al principio, los clusters 0 a N-1 tienen tamaño 1.
+        # 2. Ignoramos la diagonal para no fusionar una muestra consigo misma
+        np.fill_diagonal(D, np.inf)
+        
+        # 3. Matriz de enlace de salida (N-1 pasos, 4 columnas)
+        self.linkage_matrix = np.zeros((N - 1, 4), dtype=float)
+        
+        # 4. Diccionarios de seguimiento:
+        # - cluster_id_activo: mapea la fila i de la matriz con su ID global de cluster actual
+        # - tamano_clusters: guarda cuántas muestras contiene cada ID de cluster
+        cluster_id_activo = {i: i for i in range(N)}
         tamano_clusters = {i: 1 for i in range(N)}
 
-        for paso in range(N-1):
-            distancia_minima = np.inf
-            cluster1 = -1
-            cluster2 = -1
+        # Inicializamos los tamaños de cada fila de la matriz para Lance-Williams
+        tamanos_matriz = {i: 1 for i in range(N)}
 
-            # Encontrar los dos clusters más cercanos
-            for i in range(N):
-                for j in range(i+1, N):
-                    if matriz_distancias[i, j] < distancia_minima:
-                        distancia_minima = matriz_distancias[i, j]
-                        cluster1 = i
-                        cluster2 = j
+        for paso in range(N - 1):
+            # 1. Encontrar los dos clusters más cercanos (mínima distancia en D)
+            idx_min = np.argmin(D)
+            cluster1, cluster2 = np.unravel_index(idx_min, D.shape)
+            distancia_minima = float(D[cluster1, cluster2])
 
-            # El ID del nuevo cluster según el estándar es N + paso
+            if cluster1 > cluster2:
+                cluster1, cluster2 = cluster2, cluster1
+
+            # 2. Identificar qué clusters reales están viviendo en esas posiciones
+            id1 = cluster_id_activo[cluster1]
+            id2 = cluster_id_activo[cluster2]
+
+            # 3. Crear el nuevo cluster con ID global (N + paso) y registrar su tamaño
             nuevo_id_cluster = N + paso
-            
-            # El número de muestras es la suma de las muestras de los dos clusters originales
-            n_muestras = tamano_clusters[cluster1] + tamano_clusters[cluster2]
+            n_muestras = tamano_clusters[id1] + tamano_clusters[id2]
             tamano_clusters[nuevo_id_cluster] = n_muestras
 
-            #Actualizar la matriz de distancias
-            self._actualizar_distancias(matriz_distancias, cluster1, cluster2)
+            # 4. Actualizar la matriz de distancias usando Lance-Williams
+            self._actualizar_distancias(D, cluster1, cluster2, tamanos_matriz)
+            tamanos_matriz[cluster1] = n_muestras
 
-            # Guardar la fusión en linkage_matrix
-            self.linkage_matrix[paso] = [cluster1, cluster2, distancia_minima, n_muestras]
+            # 5. Guardar la fusión en linkage_matrix
+            self.linkage_matrix[paso] = [id1, id2, distancia_minima, n_muestras]
+
+            # 6. Actualizar el traductor: la fila cluster1 ahora representa a nuevo_id_cluster
+            cluster_id_activo[cluster1] = nuevo_id_cluster
+
 
         
         end_time = time.time()
@@ -76,16 +81,12 @@ class MotorJerarquico:
         
         return self.linkage_matrix
 
-    def _actualizar_distancias(self, matriz_distancias, cluster1, cluster2):
+    def _actualizar_distancias(self, D, cluster1, cluster2, tamanos_matriz):
         """
-        Actualiza la matriz de distancias tras fusionar cluster1 y cluster2.
-        
-        Aquí implementarás las ecuaciones de Single-link (min) y Complete-link (max).
+        Actualiza la matriz de distancias tras fusionar cluster1 y cluster2
+        aplicando la fórmula recursiva de Lance-Williams.
         """
-        if self._tamanos_lw is None or max(self._tamanos_lw.values()) >= matriz_distancias.shape[0]:
-            self._tamanos_lw = {i: 1 for i in range(matriz_distancias.shape[0])}
-        actualizar_matriz_lance_williams(
-            matriz_distancias, cluster1, cluster2, self.tipo_enlace, self._tamanos_lw
-        )
+        actualizar_matriz_lance_williams(D, cluster1, cluster2, self.tipo_enlace, tamanos_matriz)
+
 
         
