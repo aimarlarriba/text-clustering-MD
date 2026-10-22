@@ -170,3 +170,145 @@ def calcular_silhouette_scratch(matriz_distancias, etiquetas_predichas, devolver
         }
 
     return score_global
+
+
+
+def cortar_dendrograma_scratch(matriz_linkage, n_clusters=None, altura_h=None):
+    """
+    Corta el dendrograma jerárquico desde cero (Scratch) sin usar scipy.cluster.hierarchy.fcluster.
+    Permite cortar especificando el número deseado de clusters (n_clusters) o la altura de corte (altura_h).
+
+    Pre-condiciones:
+        - matriz_linkage: numpy.ndarray de dimensión (N - 1, 4).
+        - Debe especificarse al menos uno de: n_clusters (int en [1, N]) o altura_h (float >= 0).
+
+    Post-condiciones:
+        - Devuelve un numpy.ndarray 1D de longitud N con etiquetas enteras consecutivas [0 .. K-1].
+    """
+    if n_clusters is None and altura_h is None:
+        raise ValueError("Debe especificarse 'n_clusters' o 'altura_h' para cortar el dendrograma.")
+
+    L = np.asarray(matriz_linkage, dtype=np.float64)
+    N = L.shape[0] + 1
+    miembros = {i: [i] for i in range(N)}
+    usa_ids_estandar = np.max(L[:, :2]) >= N
+
+    clusters_activos = set(range(N))
+
+    for paso in range(N - 1):
+        # Si cortamos por número de clusters y ya alcanzamos K, detenemos las fusiones
+        if n_clusters is not None and len(clusters_activos) <= n_clusters:
+            break
+
+        c1 = int(L[paso, 0])
+        c2 = int(L[paso, 1])
+        distancia_fusion = L[paso, 2]
+
+        # Si cortamos por altura y la fusión supera altura_h, detenemos las fusiones
+        if altura_h is not None and distancia_fusion > altura_h:
+            break
+
+        fusionados = miembros[c1] + miembros[c2]
+        clusters_activos.discard(c1)
+        clusters_activos.discard(c2)
+
+        nuevo_id = (N + paso) if usa_ids_estandar else c1
+        miembros[nuevo_id] = fusionados
+        clusters_activos.add(nuevo_id)
+
+    # Asignar etiquetas enteras limpias 0, 1, ..., K-1 a cada instancia original
+    etiquetas = np.zeros(N, dtype=int)
+    for nuevo_label, cid in enumerate(sorted(clusters_activos)):
+        for idx_punto in miembros[cid]:
+            etiquetas[idx_punto] = nuevo_label
+
+    return etiquetas
+
+
+def optimizar_hiperparametros_internos(matriz_distancias, enlaces=("single", "complete", "average"), rango_k=range(2, 11)):
+    """
+    Banco de pruebas de validación interna (Scratch): evalúa los distintos criterios
+    de enlace de Lance-Williams mediante CPCC y busca el número óptimo de clusters K
+    maximizando el Silhouette Score.
+
+    Pre-condiciones:
+        - matriz_distancias: numpy.ndarray simétrica (N, N).
+        - enlaces: iterable con los tipos de enlace a evaluar.
+        - rango_k: iterable de enteros K (2 <= K < N).
+
+    Post-condiciones:
+        - Devuelve un diccionario con el resumen experimental y la configuración óptima.
+    """
+    from src.clustering.hierarchical import MotorJerarquico
+
+    resultados = {}
+    mejor_config = {
+        "enlace": None,
+        "k_optimo": None,
+        "silhouette": -1.0,
+        "cpcc": -1.0,
+        "linkage_matrix": None,
+        "etiquetas": None,
+    }
+
+    for enlace in enlaces:
+        motor = MotorJerarquico(tipo_enlace=enlace)
+        Z = motor.fit(matriz_distancias)
+        cpcc = calcular_cpcc_scratch(matriz_distancias, Z)
+
+        sil_por_k = {}
+        for k in rango_k:
+            etiquetas_k = cortar_dendrograma_scratch(Z, n_clusters=k)
+            if len(np.unique(etiquetas_k)) < 2:
+                continue
+            det = calcular_silhouette_scratch(matriz_distancias, etiquetas_k, devolver_detalle=True)
+            sil_por_k[k] = {
+                "silhouette": det["Silhouette Score"],
+                "cohesion_media": det["Cohesion Media a(i)"],
+                "separacion_media": det["Separacion Media b(i)"],
+            }
+
+            if det["Silhouette Score"] > mejor_config["silhouette"]:
+                mejor_config.update({
+                    "enlace": enlace,
+                    "k_optimo": k,
+                    "silhouette": det["Silhouette Score"],
+                    "cpcc": cpcc,
+                    "linkage_matrix": Z,
+                    "etiquetas": etiquetas_k,
+                })
+
+        resultados[enlace] = {
+            "cpcc": cpcc,
+            "silhouette_por_k": sil_por_k,
+        }
+
+    return {"resultados_por_enlace": resultados, "mejor_configuracion": mejor_config}
+
+
+if __name__ == "__main__":
+    print("=== Toy-Example: Validación Interna Scratch (CPCC y Silhouette) ===")
+    from src.clustering.hierarchical import MotorJerarquico
+
+    # Datos sintéticos con 3 grupos bien diferenciados (15 puntos en total)
+    np.random.seed(42)
+    g1 = np.random.normal(loc=0.0, scale=0.2, size=(5, 4))
+    g2 = np.random.normal(loc=5.0, scale=0.2, size=(5, 4))
+    g3 = np.random.normal(loc=10.0, scale=0.2, size=(5, 4))
+    X_toy = np.vstack([g1, g2, g3])
+
+    # Matriz de distancias euclídeas simple para el toy-example
+    diff = X_toy[:, None, :] - X_toy[None, :, :]
+    D_toy = np.sqrt(np.sum(diff ** 2, axis=-1))
+
+    for enlace in ["single", "complete", "average"]:
+        motor = MotorJerarquico(tipo_enlace=enlace)
+        Z_toy = motor.fit(D_toy)
+        cpcc_val = calcular_cpcc_scratch(D_toy, Z_toy)
+        labels_k3 = cortar_dendrograma_scratch(Z_toy, n_clusters=3)
+        det_sil = calcular_silhouette_scratch(D_toy, labels_k3, devolver_detalle=True)
+        print(
+            f"Enlace: {enlace:8s} | CPCC: {cpcc_val:.4f} | "
+            f"Silhouette (K=3): {det_sil['Silhouette Score']:.4f} "
+            f"(a(i)={det_sil['Cohesion Media a(i)']:.4f}, b(i)={det_sil['Separacion Media b(i)']:.4f})"
+        )
