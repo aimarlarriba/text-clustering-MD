@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 #from scipy.cluster.hierarchy import fcluster
-from src.metricas_internas import (
+from metricas_internas import (
     calcular_cpcc_scratch,
     calcular_silhouette_scratch,
     cortar_dendrograma_scratch,
