@@ -1,56 +1,78 @@
+import os
+import sys
+import json
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from scipy.cluster.hierarchy import fcluster
-from src.metricas_internas import calcular_cpcc_scratch, calcular_silhouette_scratch
 
 
-def calcular_metricas_externas(etiquetas_reales, etiquetas_predichas):
+def calcular_metricas_externas(labels_true, labels_pred):
     """
-        Calcula métricas de evaluación externa (Rand Index, Jaccard, Fowlkes-Mallows) desde cero (Scratch).
+    Calcula las métricas de validación externa evaluando los pares de instancias.
 
-        Pre-condiciones:
-            - etiquetas_reales: array-like 1D de tamaño N con las clases reales (Ground-Truth).
-            - etiquetas_predichas: array-like 1D de tamaño N con los clusters asignados por el modelo.
-            - len(etiquetas_reales) == len(etiquetas_predichas) > 0.
+    Pre-condiciones:
+    - labels_true y labels_pred deben ser arrays 1D de igual longitud (N,).
 
-        Post-condiciones:
-            - Devuelve un diccionario con las tres métricas calculadas en el rango [0, 1].
-        """
-    n = len(etiquetas_reales)
-    n11 = n00 = n10 = n01 = 0
+    Post-condiciones:
+    - Devuelve un diccionario con las tres métricas (Rand, Jaccard, Fowlkes-Mallows).
+    - Todos los índices devueltos están acotados en [0.0, 1.0].
+    """
+    labels_true = np.asarray(labels_true).flatten()
+    labels_pred = np.asarray(labels_pred).flatten()
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            mismo_real = (etiquetas_reales[i] == etiquetas_reales[j])
-            mismo_pred = (etiquetas_predichas[i] == etiquetas_predichas[j])
+    assert len(labels_true) == len(labels_pred), "Las dimensiones de las etiquetas no coinciden"
 
-            if mismo_real and mismo_pred:
-                n11 += 1
-            elif not mismo_real and not mismo_pred:
-                n00 += 1
-            elif not mismo_real and mismo_pred:
-                n10 += 1
-            elif mismo_real and not mismo_pred:
-                n01 += 1
+    n = len(labels_true)
 
-    total_pares = n11 + n00 + n10 + n01
-    rand_index = (n11 + n00) / total_pares if total_pares > 0 else 0
-    jaccard = n11 / (n11 + n10 + n01) if (n11 + n10 + n01) > 0 else 0
+    mat_true = (labels_true[:, None] == labels_true[None, :])
+    mat_pred = (labels_pred[:, None] == labels_pred[None, :])
 
-    denominador_fm = np.sqrt((n11 + n10) * (n11 + n01))
-    fowlkes_mallows = n11 / denominador_fm if denominador_fm > 0 else 0
+    upper_tri_indices = np.triu_indices(n, k=1)
+    pairs_true = mat_true[upper_tri_indices]
+    pairs_pred = mat_pred[upper_tri_indices]
 
-    return {"Rand Index": round(rand_index, 4), "Jaccard": round(jaccard, 4),
-            "Fowlkes-Mallows": round(fowlkes_mallows, 4)}
+    a = np.sum(pairs_true & pairs_pred)
+    b = np.sum(~pairs_true & ~pairs_pred)
+    c = np.sum(~pairs_true & pairs_pred)
+    d = np.sum(pairs_true & ~pairs_pred)
+
+    rand_index = (a + b) / (a + b + c + d) if (a + b + c + d) > 0 else 0.0
+    jaccard = a / (a + c + d) if (a + c + d) > 0 else 0.0
+    fowlkes_mallows = a / np.sqrt((a + c) * (a + d)) if (a + c) > 0 and (a + d) > 0 else 0.0
+
+    return {
+        "rand_index": float(rand_index),
+        "jaccard": float(jaccard),
+        "fowlkes_mallows": float(fowlkes_mallows)
+    }
 
 
 def cortar_arbol(matriz_linkage, altura_h):
-    clusters_asignados = fcluster(matriz_linkage, t=altura_h, criterion='distance')
-    return clusters_asignados
+    """
+    Genera los clústeres planos a partir del dendrograma jerárquico.
+
+    Pre-condiciones:
+    - matriz_linkage: matriz numpy de tamaño (N-1, 4).
+    - altura_h: valor float positivo.
+
+    Post-condiciones:
+    - Devuelve un array 1D con las etiquetas de clúster.
+    """
+    return fcluster(matriz_linkage, t=altura_h, criterion='distance')
 
 
 def visualizar_pca_clusters(vectores_densos, etiquetas_predichas):
+    """
+    Reduce la dimensionalidad del espacio vectorial y lo grafica en 2D.
+
+    Pre-condiciones:
+    - vectores_densos: matriz numpy de tamaño (N, D).
+    - etiquetas_predichas: array 1D de tamaño N con los IDs de los clústeres.
+
+    Post-condiciones:
+    - Muestra un gráfico de dispersión con la proyección PCA.
+    """
     pca = PCA(n_components=2)
     vectores_2d = pca.fit_transform(vectores_densos)
 
@@ -65,87 +87,67 @@ def visualizar_pca_clusters(vectores_densos, etiquetas_predichas):
 def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_entrenamiento, textos_entrenamiento,
                                k=3):
     """
-    Asigna un nuevo post a un cluster y muestra por pantalla los textos más similares.
+    Asigna un nuevo post a un cluster usando 1-NN.
 
     Pre-condiciones:
-        - vector_nuevo: numpy array 1D de tamaño D (dimensión del embedding).
-        - vectores_entrenamiento: numpy matrix de tamaño (N, D).
-        - etiquetas_entrenamiento: numpy array 1D de tamaño N.
-        - textos_entrenamiento: lista de strings de tamaño N con los posts originales.
-        - k: entero > 0, número de textos similares a mostrar.
+    - vector_nuevo: array 1D de tamaño D.
+    - vectores_entrenamiento: matriz de tamaño (N, D).
+    - etiquetas_entrenamiento: array 1D de tamaño N.
+    - textos_entrenamiento: lista de strings de tamaño N.
+    - k: entero > 0.
 
     Post-condiciones:
-        - Imprime los K textos más cercanos y sus distancias.
-        - Devuelve un int/string con la etiqueta del cluster asignado.
+    - Imprime los K textos más cercanos.
+    - Devuelve la etiqueta del cluster asignado.
     """
-    # 1. Calcular la distancia euclídea entre el nuevo post y todos los de entrenamiento
     distancias = np.linalg.norm(vectores_entrenamiento - vector_nuevo, axis=1)
-
-    # 2. Obtener los índices de los 'k' posts con menor distancia (los más cercanos)
     indices_cercanos = np.argsort(distancias)[:k]
 
-    # 3. Asignar el cluster basado en el vecino más cercano (1-NN)
     cluster_asignado = etiquetas_entrenamiento[indices_cercanos[0]]
 
-    # 4. Mostrar los textos originales por consola
     print(f"\n--- NUEVO POST ASIGNADO AL CLUSTER: {cluster_asignado} ---")
-    print(f"Los {k} posts del corpus más semánticamente parecidos son:")
+    print(f"Los {k} posts más parecidos son:")
     for i, idx in enumerate(indices_cercanos):
         print(f"  {i + 1}. [Distancia: {distancias[idx]:.4f}] -> \"{textos_entrenamiento[idx]}\"")
 
     return cluster_asignado
 
 
-# --- BLOQUE DE EJECUCIÓN CON DATOS REALES ---
 if __name__ == "__main__":
-    import os
-    import json
-    import numpy as np
+    print("Iniciando evaluación...")
 
-    print("Iniciando evaluación con datos reales...")
-
-    # 1. CARGAR LOS DATOS PROCESADOS
-    # Buscamos la carpeta 'data_processed' generada por el pipeline
     carpeta_raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     carpeta_datos = os.path.join(carpeta_raiz, "data_processed")
+    sys.path.append(carpeta_raiz)
 
-    ruta_embeddings = os.path.join(carpeta_datos, "embeddings_sbert.npy")
-    ruta_etiquetas = os.path.join(carpeta_datos, "etiquetas_reales.npy")
-    ruta_textos = os.path.join(carpeta_datos, "textos_posts.json")
-
+    # 1. Cargar los datos procesados
     try:
-        print("Cargando embeddings, textos y etiquetas guardados...")
-        vectores_densos = np.load(ruta_embeddings)
-        etiquetas_reales = np.load(ruta_etiquetas)
+        vectores_densos = np.load(os.path.join(carpeta_datos, "embeddings_sbert.npy"))
+        etiquetas_reales = np.load(os.path.join(carpeta_datos, "etiquetas_reales.npy"))
+        matriz_distancias = np.load(os.path.join(carpeta_datos, "matriz_distancias_cosine.npy"))
 
-        with open(ruta_textos, "r", encoding="utf-8") as f:
+        with open(os.path.join(carpeta_datos, "textos_posts.json"), "r", encoding="utf-8") as f:
             textos_reales = json.load(f)
-
-        print(f"¡Éxito! {len(textos_reales)} posts cargados correctamente.")
     except FileNotFoundError:
-        print(
-            "Error: No se encuentran los datos. Ejecuta primero 'pipeline.py' para procesar los textos y generar los archivos en 'data_processed/'.")
+        print("Error: No se encuentran los datos. Ejecuta pipeline.py primero.")
         exit()
 
-    # 2. GENERAR EL CLUSTERING JERÁRQUICO
-    # import sys
-    # sys.path.append(carpeta_raiz)
-    # from src.clustering.hierarchical import hacer_clustering
+    # 2. Generar el clustering
+    from src.clustering.hierarchical import MotorJerarquico
 
-    # print("Calculando matriz de enlaces (Linkage)...")
-    # matriz_linkage = hacer_clustering(vectores_densos)
+    motor = MotorJerarquico(tipo_enlace="average")
+    matriz_linkage = motor.fit(matriz_distancias)
 
-    # 3. CORTAR EL ÁRBOL Y EVALUAR
-    # print("Cortando dendrograma...")
-    # altura_h = 2.0  # <- Ajustaréis este valor al ver el dendrograma
+    # 3. Cortar el dendrograma
+    altura_h = 0.70
+    predicciones = cortar_arbol(matriz_linkage, altura_h)
 
-    # predicciones = cortar_arbol(matriz_linkage, altura_h)
+    print("\n--- RESULTADOS DE VALIDACIÓN ---")
+    resultados = calcular_metricas_externas(etiquetas_reales, predicciones)
+    print(f"Rand Index: {resultados.get('rand_index', 0):.4f}")
+    print(f"Jaccard: {resultados.get('jaccard', 0):.4f}")
+    print(f"Fowlkes-Mallows: {resultados.get('fowlkes_mallows', 0):.4f}")
 
-    # resultados = calcular_metricas_externas(etiquetas_reales, predicciones)
-    # print("Métricas finales:", resultados)
+    visualizar_pca_clusters(vectores_densos, predicciones)
 
-    # print("Abriendo gráfico PCA real...")
-    # visualizar_pca_clusters(vectores_densos, predicciones)
-
-    # print("Probando inferencia con el primer texto del corpus...")
-    # inferir_y_mostrar_cercanos(vectores_densos[0], vectores_densos, predicciones, textos_reales, k=3)
+    inferir_y_mostrar_cercanos(vectores_densos[0], vectores_densos, predicciones, textos_reales, k=3)
