@@ -4,7 +4,12 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
-from scipy.cluster.hierarchy import fcluster
+#from scipy.cluster.hierarchy import fcluster
+from src.metricas_internas import (
+    calcular_cpcc_scratch,
+    calcular_silhouette_scratch,
+    cortar_dendrograma_scratch,
+)
 
 
 def calcular_metricas_externas(labels_true, labels_pred):
@@ -48,18 +53,18 @@ def calcular_metricas_externas(labels_true, labels_pred):
     }
 
 
-def cortar_arbol(matriz_linkage, altura_h):
+def cortar_arbol(matriz_linkage, altura_h=None, n_clusters=None):
     """
-    Genera los clústeres planos a partir del dendrograma jerárquico.
+    Genera los clústeres planos a partir del dendrograma jerárquico desde cero (Scratch).
 
     Pre-condiciones:
     - matriz_linkage: matriz numpy de tamaño (N-1, 4).
-    - altura_h: valor float positivo.
+    - altura_h: valor float positivo (opcional) o n_clusters: entero K >= 2 (opcional).
 
     Post-condiciones:
     - Devuelve un array 1D con las etiquetas de clúster.
     """
-    return fcluster(matriz_linkage, t=altura_h, criterion='distance')
+    return cortar_dendrograma_scratch(matriz_linkage, n_clusters=n_clusters, altura_h=altura_h)
 
 
 def visualizar_pca_clusters(vectores_densos, etiquetas_predichas):
@@ -141,6 +146,24 @@ if __name__ == "__main__":
     # 3. Cortar el dendrograma
     altura_h = 0.70
     predicciones = cortar_arbol(matriz_linkage, altura_h)
+
+    print("\n--- RESULTADOS DE VALIDACIÓN INTERNA (SCRATCH) ---")
+    cpcc = calcular_cpcc_scratch(matriz_distancias, matriz_linkage)
+    print(f"Coeficiente de Correlación Cofenética (CPCC): {cpcc:.4f}")
+
+    n_clusters_gen = len(np.unique(predicciones))
+    print(f"Clusters generados en el corte: {n_clusters_gen}")
+    if 2 <= n_clusters_gen < len(predicciones):
+        detalle_sil = calcular_silhouette_scratch(matriz_distancias, predicciones, devolver_detalle=True)
+        print(f"Silhouette Score: {detalle_sil['Silhouette Score']:.4f}")
+        print(f"  - Cohesión media a(i):   {detalle_sil['Cohesion Media a(i)']:.4f}")
+        print(f"  - Separación media b(i): {detalle_sil['Separacion Media b(i)']:.4f}")
+
+    # Comparativa rápida con K=5 (las 5 clases clínicas C-SSRS)
+    pred_k5 = cortar_arbol(matriz_linkage, n_clusters=5)
+    det_k5 = calcular_silhouette_scratch(matriz_distancias, pred_k5, devolver_detalle=True)
+    print(f"Silhouette Score (corte exacto K=5): {det_k5['Silhouette Score']:.4f} "
+          f"(a(i)={det_k5['Cohesion Media a(i)']:.4f}, b(i)={det_k5['Separacion Media b(i)']:.4f})")
 
     print("\n--- RESULTADOS DE VALIDACIÓN ---")
     resultados = calcular_metricas_externas(etiquetas_reales, predicciones)
