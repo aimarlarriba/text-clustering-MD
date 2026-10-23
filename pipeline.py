@@ -115,7 +115,28 @@ def main():
     parser.add_argument("--n_muestras", type=int, default=500, help="Número de posts a procesar")
     parser.add_argument("--modelo", type=str, default="all-MiniLM-L6-v2", help="Modelo de SBERT")
     parser.add_argument("--salida", type=str, default="data_processed", help="Carpeta de salida")
+    parser.add_argument("--texto", type=str, default=None, help="Introduce un texto en inglés para evaluar su riesgo.")
+    parser.add_argument("--infer", action="store_true", help="Activa el modo de inferencia.")
     args = parser.parse_args()
+
+    if args.texto or args.infer:
+        texto_evaluar = args.texto if args.texto else "I feel so overwhelmed and I don't know what to do."
+        print(f"\n[MODO INFERENCIA] Procesando nuevo texto: '{texto_evaluar}'")
+
+        from src.evaluacion import inferir_y_mostrar_cercanos
+
+        try:
+            X_train = np.load(os.path.join(args.salida, "embeddings_sbert.npy"))
+            y_train = np.load(os.path.join(args.salida, "etiquetas_reales.npy"))
+            with open(os.path.join(args.salida, "textos_posts.json"), "r", encoding="utf-8") as f:
+                textos_train = json.load(f)
+        except FileNotFoundError:
+            print("Error: Datos base no encontrados. Ejecuta primero el pipeline completo.")
+            return
+
+        vector_nuevo = generar_embeddings([texto_evaluar], nombre_modelo=args.modelo, normalizar=True)[0]
+        inferir_y_mostrar_cercanos(vector_nuevo, X_train, y_train, textos_train, k=3)
+        return
 
     os.makedirs(args.salida, exist_ok=True)
 
