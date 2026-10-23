@@ -13,19 +13,40 @@ def generar_embeddings(textos, nombre_modelo="all-MiniLM-L6-v2", normalizar=True
         - textos: lista o array con textos (strings).
         - nombre_modelo: identificador del modelo de sentence-transformers.
         - normalizar: si es True, normaliza los vectores a norma unitaria (L2 = 1.0).
+          Si es False, extrae la salida directa de la capa de Pooling antes de la
+          normalización L2 para permitir contrastes empíricos formales.
 
     Post-condiciones:
         - Devuelve una matriz de numpy de dimensiones (N, 384) en float32.
     """
     from sentence_transformers import SentenceTransformer
+    import torch
+
     modelo = SentenceTransformer(nombre_modelo)
     textos_limpios = [str(t) if t is not None else "" for t in textos]
-    vectores = modelo.encode(
-        textos_limpios,
-        normalize_embeddings=normalizar,
-        show_progress_bar=True
-    )
-    return np.asarray(vectores, dtype=np.float32)
+
+    if not normalizar:
+        # Bypassear la capa Normalize para obtener vectores crudos con magnitudes reales
+        batch_size = 64
+        vectores_lista = []
+        for i in range(0, len(textos_limpios), batch_size):
+            lote = textos_limpios[i:i + batch_size]
+            features = modelo.preprocess(lote) if hasattr(modelo, "preprocess") else modelo.tokenize(lote)
+            for k, v in features.items():
+                if isinstance(v, torch.Tensor):
+                    features[k] = v.to(modelo.device)
+            with torch.no_grad():
+                out = modelo[0](features)
+                emb = modelo[1](out)["sentence_embedding"].cpu().numpy()
+            vectores_lista.append(emb)
+        return np.vstack(vectores_lista).astype(np.float32)
+    else:
+        vectores = modelo.encode(
+            textos_limpios,
+            normalize_embeddings=True,
+            show_progress_bar=True
+        )
+        return np.asarray(vectores, dtype=np.float32)
 
 
 def guardar_embeddings(X: np.ndarray, ruta_archivo: str) -> None:

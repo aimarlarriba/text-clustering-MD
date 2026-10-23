@@ -11,14 +11,19 @@ except (ImportError, ModuleNotFoundError):
 
 class MotorJerarquico:
     """
-    Motor Jerárquico Aglomerativo (SAHN) implementado desde cero.
+    Motor Jerárquico Aglomerativo (SAHN: Sequential Agglomerative Hierarchical Non-overlapping)
+    implementado desde cero (Scratch) mediante la fórmula recursiva de Lance-Williams (1967).
     """
 
     def __init__(self, tipo_enlace="single"):
         """
-        Inicializa el motor de clustering.
-        
-        :param tipo_enlace: Criterio de enlace a usar: 'single' (min), 'complete' (max) o 'average' (promedio).
+        Inicializa el motor de clustering jerárquico.
+
+        Pre-condiciones:
+            - tipo_enlace: str en {'single', 'complete', 'average'}.
+
+        Post-condiciones:
+            - Instancia configurada con el enlace seleccionado y linkage_matrix inicializada en None.
         """
         if tipo_enlace not in ["single", "complete", "average"]:
             raise ValueError("El tipo_enlace debe ser 'single', 'complete' o 'average'")
@@ -28,9 +33,17 @@ class MotorJerarquico:
     def fit(self, matriz_distancias):
         """
         Ejecuta el algoritmo aglomerativo iterativo sobre una matriz de distancias precalculada.
-        
-        :param matriz_distancias: Matriz cuadrada de distancias (N x N).
-        :return: linkage_matrix de tamaño (N-1, 4) en formato estándar compatible con SciPy.
+
+        Pre-condiciones:
+            - matriz_distancias: numpy.ndarray simétrica cuadrada (N x N) con distancias d(i, j) >= 0,
+              diagonal nula d(i, i) = 0 y N >= 2 instancias.
+
+        Post-condiciones:
+            - Devuelve y almacena self.linkage_matrix: numpy.ndarray de dimensiones (N - 1, 4)
+              en formato canónico compatible con SciPy:
+              [id_cluster_1, id_cluster_2, distancia_fusion, tamano_cluster_resultante].
+            - Invariante de iteración: en el paso p (0 <= p < N-1), existen exactamente N - p clusters
+              activos disjuntos particionando el conjunto total de instancias.
         """
         start_time = time.time()
         
@@ -92,6 +105,14 @@ class MotorJerarquico:
         """
         Actualiza la matriz de distancias tras fusionar cluster1 y cluster2
         aplicando la fórmula recursiva de Lance-Williams.
+
+        Pre-condiciones:
+            - D: numpy.ndarray cuadrada (N x N) modificable in-place.
+            - cluster1, cluster2: índices enteros válidos activos en la matriz.
+            - tamanos_matriz: diccionario con los tamaños actuales de los clusters.
+
+        Post-condiciones:
+            - Actualiza D[cluster1, :] y D[:, cluster1] con d(C1 U C2, Ck) y anula cluster2 con inf.
         """
         actualizar_matriz_lance_williams(D, cluster1, cluster2, self.tipo_enlace, tamanos_matriz)
 

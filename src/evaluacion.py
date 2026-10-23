@@ -370,6 +370,9 @@ def extraer_y_visualizar_centroides_textuales_scratch(
     X_2d = pca.fit_transform(vectores_densos)
     centroides_2d = pca.transform(centroides_384)
     cmap = plt.get_cmap("tab20").resampled(k_representar)
+    var_pca1 = float(pca.explained_variance_ratio_[0] * 100)
+    var_pca2 = float(pca.explained_variance_ratio_[1] * 100)
+    var_total_2d = var_pca1 + var_pca2
 
     fig, ax_map = plt.subplots(figsize=(12.5, 7.2))
     fig.suptitle(
@@ -378,7 +381,7 @@ def extraer_y_visualizar_centroides_textuales_scratch(
     )
     plt.figtext(
         0.5, 0.915,
-        "Visualización de instancias en el subespacio de máxima varianza y ubicación de los prototipos promedio m_j (Estrellas) para los grupos principales",
+        f"Visualización en el subespacio de máxima varianza (Varianza explicada 2D: {var_total_2d:.1f}% | PCA 1: {var_pca1:.1f}%, PCA 2: {var_pca2:.1f}%) y centroides m_j (Estrellas)",
         ha="center", fontsize=9.8, style="italic", color="#333333"
     )
 
@@ -417,13 +420,13 @@ def extraer_y_visualizar_centroides_textuales_scratch(
                 zorder=11
             )
 
-    ax_map.set_xlabel("Componente Principal 1 (PCA 1)", fontsize=10.5)
-    ax_map.set_ylabel("Componente Principal 2 (PCA 2)", fontsize=10.5)
+    ax_map.set_xlabel(f"Componente Principal 1 (PCA 1 - {var_pca1:.1f}% varianza)", fontsize=10.5)
+    ax_map.set_ylabel(f"Componente Principal 2 (PCA 2 - {var_pca2:.1f}% varianza)", fontsize=10.5)
     ax_map.grid(True, linestyle=":", alpha=0.6)
     ax_map.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8.3, title="Clusters y 1ª Ventana Temática", title_fontsize=9, framealpha=0.95)
 
     nota_f6 = textwrap.fill(
-        "Lectura del mapa PCA: Las estrellas representan las coordenadas exactas de los centroides m_j = (1/|G_j|) Σ x en R^384 proyectadas en 2D. "
+        f"Lectura del mapa PCA: Las estrellas representan las coordenadas exactas de los centroides m_j = (1/|G_j|) Σ x en R^384 proyectadas en el plano 2D ({var_total_2d:.1f}% de varianza acumulada). "
         "La leyenda exterior derecha muestra para cada cluster su tamaño, su clase clínica mayoritaria y su primera ventana temática de 3 palabras.",
         width=130
     )
@@ -603,51 +606,94 @@ def cortar_arbol(matriz_linkage, altura_h=None, n_clusters=None):
 
 def visualizar_pca_clusters(vectores_densos, etiquetas_predichas):
     """
-    Reduce la dimensionalidad del espacio vectorial y lo grafica en 2D.
+    Reduce la dimensionalidad del espacio vectorial a 2 componentes principales (PCA)
+    y grafica la dispersión de los clusters formados.
 
     Pre-condiciones:
-    - vectores_densos: matriz numpy de tamaño (N, D).
-    - etiquetas_predichas: array 1D de tamaño N con los IDs de los clústeres.
+        - vectores_densos: matriz numpy de tamaño (N, D).
+        - etiquetas_predichas: array 1D de tamaño N con los IDs de los clústeres.
 
     Post-condiciones:
-    - Muestra un gráfico de dispersión con la proyección PCA.
+        - Muestra un gráfico de dispersión 2D reflejando la varianza explicada en los ejes.
     """
-    pca = PCA(n_components=2)
+    pca = PCA(n_components=2, random_state=42)
     vectores_2d = pca.fit_transform(vectores_densos)
+    v1 = float(pca.explained_variance_ratio_[0] * 100)
+    v2 = float(pca.explained_variance_ratio_[1] * 100)
 
-    plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(vectores_2d[:, 0], vectores_2d[:, 1], c=etiquetas_predichas, cmap='viridis', alpha=0.8,
-                          edgecolor='k')
-    plt.title("Proyección PCA de los Clusters")
+    plt.figure(figsize=(9, 6.5))
+    scatter = plt.scatter(
+        vectores_2d[:, 0], vectores_2d[:, 1],
+        c=etiquetas_predichas, cmap='tab20', alpha=0.75,
+        edgecolor='k', s=35
+    )
+    plt.title(f"Proyección PCA 2D de los Clusters (Varianza Explicada: {v1 + v2:.1f}%)", fontsize=12, fontweight="bold")
+    plt.xlabel(f"Componente Principal 1 (PCA 1 - {v1:.1f}% varianza)", fontsize=10.5)
+    plt.ylabel(f"Componente Principal 2 (PCA 2 - {v2:.1f}% varianza)", fontsize=10.5)
     plt.colorbar(scatter, label="Cluster ID")
+    plt.grid(True, linestyle=":", alpha=0.5)
+    plt.tight_layout()
     plt.show()
 
 
-def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_entrenamiento, textos_entrenamiento,
-                               k=3):
+def inferir_y_mostrar_cercanos(
+    vector_nuevo,
+    vectores_entrenamiento,
+    etiquetas_entrenamiento,
+    textos_entrenamiento,
+    k=3,
+    metrica="cosine",
+    modelo_pca=None
+):
     """
-    Asigna un nuevo post a un cluster usando 1-NN.
+    Asigna una nueva instancia al cluster de su vecino más cercano (1-NN)
+    y recupera las K instancias más afines del corpus de entrenamiento,
+    garantizando coherencia con el espacio métrico y la proyección previa.
 
     Pre-condiciones:
-    - vector_nuevo: array 1D de tamaño D.
-    - vectores_entrenamiento: matriz de tamaño (N, D).
-    - etiquetas_entrenamiento: array 1D de tamaño N.
-    - textos_entrenamiento: lista de strings de tamaño N.
-    - k: entero > 0.
+        - vector_nuevo: array 1D de dimensión D_orig o dimensión reducida D_pca.
+        - vectores_entrenamiento: array 2D de dimensiones (N_train, D).
+        - etiquetas_entrenamiento: array 1D de longitud N_train con los IDs de cluster asignados en train.
+        - textos_entrenamiento: lista o array de longitud N_train con los textos correspondientes.
+        - k: entero >= 1 indicando el número de vecinos más próximos a recuperar y mostrar.
+        - metrica: str en {'cosine', 'euclidean'}. Debe coincidir con la métrica del clustering.
+        - modelo_pca: objeto PCA ajustado en train (opcional). Si se proporciona y vector_nuevo
+          tiene la dimensión original, se proyecta mediante modelo_pca.transform().
 
     Post-condiciones:
-    - Imprime los K textos más cercanos.
-    - Devuelve la etiqueta del cluster asignado.
+        - Devuelve el ID entero del cluster asignado (etiqueta del vecino 1-NN en entrenamiento).
+        - Muestra en consola la distancia y el contenido textual de los K ejemplos más afines.
     """
-    distancias = np.linalg.norm(vectores_entrenamiento - vector_nuevo, axis=1)
+    v_nuevo = np.asarray(vector_nuevo, dtype=np.float32)
+    X_train = np.asarray(vectores_entrenamiento, dtype=np.float32)
+
+    # Proyección con el modelo PCA de entrenamiento si corresponde
+    if modelo_pca is not None:
+        if hasattr(modelo_pca, "n_features_in_") and v_nuevo.shape[0] == modelo_pca.n_features_in_:
+            v_nuevo = modelo_pca.transform(v_nuevo.reshape(1, -1)).flatten()
+
+    metrica_clean = metrica.lower().strip()
+    if metrica_clean in ["cosine", "coseno"]:
+        norm_v = float(np.linalg.norm(v_nuevo))
+        norm_X = np.linalg.norm(X_train, axis=1)
+        norm_v = 1.0 if norm_v == 0.0 else norm_v
+        norm_X = np.where(norm_X == 0.0, 1.0, norm_X)
+
+        similitud = np.dot(X_train, v_nuevo) / (norm_X * norm_v)
+        similitud = np.clip(similitud, -1.0, 1.0)
+        distancias = 1.0 - similitud
+    elif metrica_clean in ["euclidean", "euclidea"]:
+        distancias = np.linalg.norm(X_train - v_nuevo, axis=1)
+    else:
+        raise ValueError(f"Métrica '{metrica}' no soportada (usar 'cosine' o 'euclidean').")
+
     indices_cercanos = np.argsort(distancias)[:k]
+    cluster_asignado = int(etiquetas_entrenamiento[indices_cercanos[0]])
 
-    cluster_asignado = etiquetas_entrenamiento[indices_cercanos[0]]
-
-    print(f"\n--- NUEVO POST ASIGNADO AL CLUSTER: {cluster_asignado} ---")
+    print(f"\n--- NUEVO POST ASIGNADO AL CLUSTER: C{cluster_asignado} (Espacio Métrico: {metrica.capitalize()}) ---")
     print(f"Los {k} posts más parecidos son:")
     for i, idx in enumerate(indices_cercanos):
-        print(f"  {i + 1}. [Distancia: {distancias[idx]:.4f}] -> \"{textos_entrenamiento[idx]}\"")
+        print(f"  {i + 1}. [Distancia {metrica}: {distancias[idx]:.4f}] -> \"{textos_entrenamiento[idx]}\"")
 
     return cluster_asignado
 
@@ -782,15 +828,53 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
 
     ext_train = calcular_metricas_externas(y_train, pred_train)
     ext_test = calcular_metricas_externas(y_test, pred_test)
+    clf_train = calcular_metricas_clasificacion_clustering_scratch(y_train, pred_train)
+    clf_test = calcular_metricas_clasificacion_clustering_scratch(y_test, pred_test)
+
     sil_train = calcular_silhouette_scratch(D_train, pred_train)
     D_test = matriz_distancias[n_train:, n_train:]
     sil_test = calcular_silhouette_scratch(D_test, pred_test) if len(np.unique(pred_test)) >= 2 else 0.0
 
-    print(f"[TRAIN N1={n_train}] Silhouette: {sil_train:.4f} | Rand: {ext_train['rand_index']:.4f} | Jaccard: {ext_train['jaccard']:.4f}")
-    print(f"[TEST  N2={len(X_test)}] Silhouette: {sil_test:.4f} | Rand: {ext_test['rand_index']:.4f} | Jaccard: {ext_test['jaccard']:.4f}")
+    print(f"\n[TABLA COMPARATIVA HOLDOUT (N_train={n_train} | N_test={len(X_test)})]")
+    print(f"{'Métrica':<30} | {'Train (N1=400)':<15} | {'Test (N2=100)':<15}")
+    print("-" * 66)
+    print(f"{'Class-to-Cluster Accuracy (Pureza)':<30} | {clf_train['accuracy_pureza']*100:6.2f}%         | {clf_test['accuracy_pureza']*100:6.2f}%")
+    print(f"{'Estadístico Kappa de Cohen (κ)':<30} | {clf_train['kappa_cohen']:6.4f}          | {clf_test['kappa_cohen']:6.4f}")
+    print(f"{'Macro F1-Score':<30} | {clf_train['f1_macro']:6.4f}          | {clf_test['f1_macro']:6.4f}")
+    print(f"{'Rand Index (Pares)':<30} | {ext_train['rand_index']:6.4f}          | {ext_test['rand_index']:6.4f}")
+    print(f"{'Jaccard Index (Pares)':<30} | {ext_train['jaccard']:6.4f}          | {ext_test['jaccard']:6.4f}")
+    print(f"{'Silhouette Score':<30} | {sil_train:6.4f}          | {sil_test:6.4f}")
+
+    print("\nMatriz de Confusión en TEST (100 instancias no vistas, Voto Mayoritario):")
+    print(clf_test["matriz_confusion"])
+
+    # Validación Holdout Repetida (5 particiones aleatorias 80/20) para medir dispersión estadística (std)
+    rep_test_acc, rep_test_rand, rep_test_f1 = [], [], []
+    for sem in [42, 101, 202, 303, 404]:
+        rng = np.random.RandomState(sem)
+        perm = rng.permutation(len(vectores_densos))
+        idx_tr, idx_te = perm[:n_train], perm[n_train:]
+        D_tr_rep = matriz_distancias[np.ix_(idx_tr, idx_tr)]
+        Z_tr_rep = MotorJerarquico(tipo_enlace="complete").fit(D_tr_rep)
+        p_tr_rep = cortar_arbol(Z_tr_rep, n_clusters=k_pico_equilibrado)
+
+        D_te_tr = matriz_distancias[np.ix_(idx_te, idx_tr)]
+        nn_rep = np.argmin(D_te_tr, axis=1)
+        p_te_rep = p_tr_rep[nn_rep]
+
+        c_te = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales[idx_te], p_te_rep)
+        e_te = calcular_metricas_externas(etiquetas_reales[idx_te], p_te_rep)
+        rep_test_acc.append(c_te["accuracy_pureza"])
+        rep_test_rand.append(e_te["rand_index"])
+        rep_test_f1.append(c_te["f1_macro"])
+
+    print(f"\n[ESTABILIDAD Y DISPERSIÓN ESTADÍSTICA (5 Repeticiones Holdout 80/20)]")
+    print(f"  - Test Class-to-Cluster Acc: {np.mean(rep_test_acc)*100:.2f}% (std = {np.std(rep_test_acc)*100:.2f}%)")
+    print(f"  - Test Rand Index:           {np.mean(rep_test_rand):.4f} (std = {np.std(rep_test_rand):.4f})")
+    print(f"  - Test Macro F1-Score:       {np.mean(rep_test_f1):.4f} (std = {np.std(rep_test_f1):.4f})")
 
     # Inferencia honesta: pasamos la primera instancia de TEST (no vista en X_train)
-    inferir_y_mostrar_cercanos(X_test[0], X_train, pred_train, textos_reales[:n_train], k=3)
+    inferir_y_mostrar_cercanos(X_test[0], X_train, pred_train, textos_reales[:n_train], k=3, metrica="cosine")
 
     return {
         "cpcc": float(cpcc),
@@ -803,8 +887,26 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
         "jaccard": float(pares_stats["jaccard"]),
         "fowlkes_mallows": float(pares_stats["fowlkes_mallows"]),
         "holdout": {
-            "train": {"silhouette": float(sil_train), "rand": float(ext_train["rand_index"])},
-            "test": {"silhouette": float(sil_test), "rand": float(ext_test["rand_index"])},
+            "train": {
+                "accuracy_pureza": float(clf_train["accuracy_pureza"]),
+                "kappa_cohen": float(clf_train["kappa_cohen"]),
+                "f1_macro": float(clf_train["f1_macro"]),
+                "silhouette": float(sil_train),
+                "rand": float(ext_train["rand_index"]),
+                "jaccard": float(ext_train["jaccard"]),
+            },
+            "test": {
+                "accuracy_pureza": float(clf_test["accuracy_pureza"]),
+                "kappa_cohen": float(clf_test["kappa_cohen"]),
+                "f1_macro": float(clf_test["f1_macro"]),
+                "silhouette": float(sil_test),
+                "rand": float(ext_test["rand_index"]),
+                "jaccard": float(ext_test["jaccard"]),
+                "accuracy_media_5rep": float(np.mean(rep_test_acc)),
+                "accuracy_std_5rep": float(np.std(rep_test_acc)),
+                "rand_media_5rep": float(np.mean(rep_test_rand)),
+                "rand_std_5rep": float(np.std(rep_test_rand)),
+            },
         },
     }
 

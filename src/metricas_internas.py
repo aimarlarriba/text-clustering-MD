@@ -313,21 +313,53 @@ def calcular_dunn_scratch(matriz_distancias, etiquetas_predichas):
 
 def detectar_picos_locales_scratch(valores_k, valores_metrica):
     """
-    Detecta picos locales (máximos locales estrictos) en una curva de evaluación
-    para identificar números de clusters candidatos entre 2 y sqrt(N).
+    Detecta picos locales (máximos locales) en una curva de evaluación interna.
+    Permite identificar particiones candidatas naturales donde la cohesión/separación
+    presenta un óptimo relativo frente a sus vecinos inmediatos.
+
+    Pre-condiciones:
+        - valores_k: lista o array 1D con los valores de k ordenados de forma monótona creciente.
+        - valores_metrica: lista o array 1D de igual longitud que valores_k con los valores de la métrica.
+
+    Post-condiciones:
+        - Devuelve una lista de tuplas (k_pico, score_pico) con los máximos locales detectados.
     """
     picos = []
     for idx in range(1, len(valores_metrica) - 1):
         if valores_metrica[idx] > valores_metrica[idx - 1] and valores_metrica[idx] >= valores_metrica[idx + 1]:
-            picos.append((valores_k[idx], valores_metrica[idx]))
+            picos.append((int(valores_k[idx]), float(valores_metrica[idx])))
     return picos
 
 
-def optimizar_hiperparametros_internos(matriz_distancias, enlaces=("single", "complete", "average"), rango_k=None):
+def optimizar_hiperparametros_internos(
+    matriz_distancias,
+    enlaces=("single", "complete", "average"),
+    rango_k=None,
+    umbral_macro_cluster=0.80,
+):
     """
-    Banco de pruebas de validación interna (Scratch): barre k en [2, floor(sqrt(N))]
-    evaluando enlaces de Lance-Williams mediante CPCC y detectando tanto el máximo
-    global como los picos locales no degenerados de Silhouette y Dunn.
+    Banco de pruebas de validación interna estrictamente no supervisada (Scratch).
+    Evalúa los criterios de enlace de Lance-Williams mediante CPCC y explora la
+    evolución de Silhouette y Dunn Index a lo largo del espacio de búsqueda de k.
+
+    Motivación teórica del espacio de búsqueda [2, floor(sqrt(N))]:
+        - Cota inferior k=2: mínima partición no trivial posible.
+        - Cota superior k_max = floor(sqrt(N)) (Regla heurística de Mardia / Pal & Bezdek):
+          garantiza que cada cluster tenga un tamaño esperado medio >= sqrt(N),
+          evitando la dispersión patológica en clusters unitarios de ruido.
+        - Umbral de balance (umbral_macro_cluster=0.80): descarta particiones espurias
+          donde un único macro-cluster concentra >= 80% de las instancias, lo cual es
+          un síntoma clásico del efecto de encadenamiento (chaining) en enlace simple.
+
+    Pre-condiciones:
+        - matriz_distancias: numpy.ndarray cuadrada (N x N) simétrica con diagonal nula.
+        - enlaces: tupla o lista con los métodos de enlace a contrastar.
+        - rango_k: iterable de enteros >= 2 o None (si es None, usa [2, floor(sqrt(N))]).
+        - umbral_macro_cluster: float en (0.5, 1.0) para descartar particiones degeneradas.
+
+    Post-condiciones:
+        - Devuelve un diccionario exhaustivo con CPCC, curvas por k, picos locales,
+          el máximo global irrestricto y la mejor partición equilibrada no degenerada.
     """
     from src.clustering.hierarchical import MotorJerarquico
 
@@ -373,8 +405,8 @@ def optimizar_hiperparametros_internos(matriz_distancias, enlaces=("single", "co
             if sil_val > mejor_global["silhouette"]:
                 mejor_global.update({"enlace": enlace, "k_optimo": k, "silhouette": sil_val, "cpcc": cpcc})
 
-            # Partición no degenerada: el mayor cluster concentra menos del 80% de las muestras
-            if prop_mayor < 0.80 and sil_val > mejor_equilibrado["silhouette"]:
+            # Partición no degenerada: el mayor cluster concentra menos de umbral_macro_cluster
+            if prop_mayor < umbral_macro_cluster and sil_val > mejor_equilibrado["silhouette"]:
                 mejor_equilibrado.update({"enlace": enlace, "k_optimo": k, "silhouette": sil_val, "cpcc": cpcc})
 
         picos = detectar_picos_locales_scratch(lista_k, lista_sil)
@@ -385,7 +417,8 @@ def optimizar_hiperparametros_internos(matriz_distancias, enlaces=("single", "co
         }
 
     return {
-        "rango_k_explorado": [int( min(rango_k) ), int( max(rango_k) )],
+        "rango_k_explorado": [int(min(rango_k)), int(max(rango_k))],
+        "umbral_macro_cluster": float(umbral_macro_cluster),
         "resultados_por_enlace": resultados,
         "mejor_global": mejor_global,
         "mejor_particion_equilibrada": mejor_equilibrado,

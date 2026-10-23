@@ -141,9 +141,11 @@ def ejecutar_paso_evaluacion():
         print(f"  - Rand Index:                                    {resultados['rand_index']:.4f}")
         print(f"  - Jaccard Index:                                 {resultados['jaccard']:.4f}")
         print(f"  - Fowlkes-Mallows Index:                         {resultados['fowlkes_mallows']:.4f}")
+        print(f"  - Holdout Train Pureza:                          {resultados['holdout']['train']['accuracy_pureza'] * 100:.2f}%")
+        print(f"  - Holdout Test Pureza (no vistos):               {resultados['holdout']['test']['accuracy_pureza'] * 100:.2f}% (std 5-rep: {resultados['holdout']['test']['accuracy_std_5rep'] * 100:.2f}%)")
         print(f"  - Holdout Train Rand:                            {resultados['holdout']['train']['rand']:.4f}")
         print(f"  - Holdout Test Rand (no vistos):                 {resultados['holdout']['test']['rand']:.4f}")
-        print(f"\n[OK] 8 Figuras científicas disponibles en '{REPORTS_DIR}'.")
+        print(f"\n[OK] 9 Figuras científicas disponibles en '{REPORTS_DIR}'.")
     return resultados is not None
 
 

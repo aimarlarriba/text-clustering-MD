@@ -120,8 +120,8 @@ def ejecutar_toy_example():
     vecino_cercano = int(np.argmin(dists_nuevo))
     cluster_asignado = pred_k3[vecino_cercano]
     print(f"  Punto de test: {punto_nuevo}")
-    print(f"  Vecino más cercano en train: Instancia {vecino_cercano} a distancia {dists_nuevo[vecino_cercano]:.4f}")
-    print(f"  Cluster asignado: C{cluster_asignado}")
+    print(f"  Vecino más cercano en train: Instancia {vecino_cercano} a distancia euclídea {dists_nuevo[vecino_cercano]:.4f}")
+    print(f"  Cluster asignado: C{cluster_asignado} (Inferencia por 1-NN)")
 
     print("\n" + "=" * 70)
     print(" [OK] Demostración de toy-example ejecutada con éxito.")

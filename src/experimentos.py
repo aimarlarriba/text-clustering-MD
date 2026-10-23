@@ -104,25 +104,34 @@ def experimento_impacto_dimensionalidad(X, y_true, k_optimo=15, dimensiones=(2, 
 
 def experimento_impacto_normalizacion(textos, y_true, X_norm=None, k_optimo=15):
     """
-    Aporta evidencias cuantitativas sobre el efecto de la normalización L2 unitaria
+    Aporta evidencias cuantitativas rigurosas sobre el efecto de la normalización L2
     frente a representaciones no normalizadas (contraste métrico, CPCC y pureza).
+
+    Pre-condiciones:
+        - textos: lista de N strings con las publicaciones.
+        - y_true: array 1D de longitud N con las etiquetas de clase clínica.
+        - X_norm: matriz (N, 384) normalizada L2 (opcional).
+        - k_optimo: número de clusters a evaluar en el corte.
+
+    Post-condiciones:
+        - Devuelve un diccionario con las métricas de contraste y clustering para
+          vectores sin normalizar vs normalizados L2.
     """
     print("\n[EXPERIMENTO 2] Repercusión Cuantitativa de la Normalización L2...")
-    # 1. Sin normalizar
+    # 1. Sin normalizar (salida pura de la capa de pooling antes de Normalize)
     print("  Codificando SBERT sin normalización L2...")
     X_raw = generar_embeddings(textos, normalizar=False)
     D_euc_raw = calcular_matriz_distancias_scratch(X_raw, metrica="euclidean")
     D_cos_raw = calcular_matriz_distancias_scratch(X_raw, metrica="cosine")
 
-    # 2. Con normalización
+    # 2. Con normalización L2 unitaria
     if X_norm is None:
         print("  Codificando SBERT con normalización L2...")
         X_norm = generar_embeddings(textos, normalizar=True)
     D_euc_norm = calcular_matriz_distancias_scratch(X_norm, metrica="euclidean")
     D_cos_norm = calcular_matriz_distancias_scratch(X_norm, metrica="cosine")
 
-
-    # Contraste relativo C_R = (d_max - d_min) / d_min
+    # Contraste relativo C_R = (d_max - d_min) / d_min (Aggarwal et al., 2001)
     filas, cols = np.triu_indices(len(textos), k=1)
 
     def stats_dist(D_mat):
@@ -131,40 +140,56 @@ def experimento_impacto_normalizacion(textos, y_true, X_norm=None, k_optimo=15):
         c_r = (d_max - d_min) / (d_min if d_min > 1e-6 else 1e-6)
         return {"media": float(np.mean(pares)), "std": float(np.std(pares)), "contraste_relativo": float(c_r)}
 
-    # Clustering en ambos
-    Z_raw = MotorJerarquico(tipo_enlace="complete").fit(D_cos_raw)
-    pred_raw = cortar_dendrograma_scratch(Z_raw, n_clusters=k_optimo)
-    clf_raw = calcular_metricas_clasificacion_clustering_scratch(y_true, pred_raw)
-    sil_raw = calcular_silhouette_scratch(D_cos_raw, pred_raw)
-    cpcc_raw = calcular_cpcc_scratch(D_cos_raw, Z_raw)
+    # Clustering: evaluamos el impacto directo sobre la métrica Euclídea
+    # Sin normalizar: Euclídea está sesgada por la longitud del texto
+    Z_euc_raw = MotorJerarquico(tipo_enlace="complete").fit(D_euc_raw)
+    pred_euc_raw = cortar_dendrograma_scratch(Z_euc_raw, n_clusters=k_optimo)
+    clf_euc_raw = calcular_metricas_clasificacion_clustering_scratch(y_true, pred_euc_raw)
+    sil_euc_raw = calcular_silhouette_scratch(D_euc_raw, pred_euc_raw)
+    cpcc_euc_raw = calcular_cpcc_scratch(D_euc_raw, Z_euc_raw)
 
-    Z_norm = MotorJerarquico(tipo_enlace="complete").fit(D_cos_norm)
-    pred_norm = cortar_dendrograma_scratch(Z_norm, n_clusters=k_optimo)
-    clf_norm = calcular_metricas_clasificacion_clustering_scratch(y_true, pred_norm)
-    sil_norm = calcular_silhouette_scratch(D_cos_norm, pred_norm)
-    cpcc_norm = calcular_cpcc_scratch(D_cos_norm, Z_norm)
+    # Con normalización L2: Euclídea normalizada
+    Z_euc_norm = MotorJerarquico(tipo_enlace="complete").fit(D_euc_norm)
+    pred_euc_norm = cortar_dendrograma_scratch(Z_euc_norm, n_clusters=k_optimo)
+    clf_euc_norm = calcular_metricas_clasificacion_clustering_scratch(y_true, pred_euc_norm)
+    sil_euc_norm = calcular_silhouette_scratch(D_euc_norm, pred_euc_norm)
+    cpcc_euc_norm = calcular_cpcc_scratch(D_euc_norm, Z_euc_norm)
+
+    # Distancia Coseno (de referencia)
+    Z_cos = MotorJerarquico(tipo_enlace="complete").fit(D_cos_norm)
+    pred_cos = cortar_dendrograma_scratch(Z_cos, n_clusters=k_optimo)
+    clf_cos = calcular_metricas_clasificacion_clustering_scratch(y_true, pred_cos)
+    sil_cos = calcular_silhouette_scratch(D_cos_norm, pred_cos)
+    cpcc_cos = calcular_cpcc_scratch(D_cos_norm, Z_cos)
 
     res = {
         "sin_normalizar": {
             "distancia_euclidea": stats_dist(D_euc_raw),
             "distancia_coseno": stats_dist(D_cos_raw),
-            "cpcc": round(float(cpcc_raw), 4),
-            "silhouette": round(float(sil_raw), 4),
-            "accuracy_pureza": round(float(clf_raw["accuracy_pureza"]), 4),
-            "f1_macro": round(float(clf_raw["f1_macro"]), 4),
+            "cpcc": round(float(cpcc_euc_raw), 4),
+            "silhouette": round(float(sil_euc_raw), 4),
+            "accuracy_pureza": round(float(clf_euc_raw["accuracy_pureza"]), 4),
+            "f1_macro": round(float(clf_euc_raw["f1_macro"]), 4),
         },
         "con_normalizacion_l2": {
             "distancia_euclidea": stats_dist(D_euc_norm),
             "distancia_coseno": stats_dist(D_cos_norm),
-            "cpcc": round(float(cpcc_norm), 4),
-            "silhouette": round(float(sil_norm), 4),
-            "accuracy_pureza": round(float(clf_norm["accuracy_pureza"]), 4),
-            "f1_macro": round(float(clf_norm["f1_macro"]), 4),
+            "cpcc": round(float(cpcc_euc_norm), 4),
+            "silhouette": round(float(sil_euc_norm), 4),
+            "accuracy_pureza": round(float(clf_euc_norm["accuracy_pureza"]), 4),
+            "f1_macro": round(float(clf_euc_norm["f1_macro"]), 4),
         },
+        "referencia_coseno": {
+            "cpcc": round(float(cpcc_cos), 4),
+            "silhouette": round(float(sil_cos), 4),
+            "accuracy_pureza": round(float(clf_cos["accuracy_pureza"]), 4),
+            "f1_macro": round(float(clf_cos["f1_macro"]), 4),
+        }
     }
 
-    print(f"  [Sin Normalizar] Contraste Euclídeo: {res['sin_normalizar']['distancia_euclidea']['contraste_relativo']:.2f} | Silueta: {sil_raw:.4f} | Pureza: {clf_raw['accuracy_pureza']*100:.2f}%")
-    print(f"  [Con Normaliz.]  Contraste Euclídeo: {res['con_normalizacion_l2']['distancia_euclidea']['contraste_relativo']:.2f} | Silueta: {sil_norm:.4f} | Pureza: {clf_norm['accuracy_pureza']*100:.2f}%")
+    print(f"  [Euclídea Sin Norm] Contraste: {res['sin_normalizar']['distancia_euclidea']['contraste_relativo']:.2f} | Silueta: {sil_euc_raw:.4f} | Pureza: {clf_euc_raw['accuracy_pureza']*100:.2f}% | CPCC: {cpcc_euc_raw:.4f}")
+    print(f"  [Euclídea Con Norm] Contraste: {res['con_normalizacion_l2']['distancia_euclidea']['contraste_relativo']:.2f} | Silueta: {sil_euc_norm:.4f} | Pureza: {clf_euc_norm['accuracy_pureza']*100:.2f}% | CPCC: {cpcc_euc_norm:.4f}")
+    print(f"  [Coseno Normaliz. ] Contraste: {res['con_normalizacion_l2']['distancia_coseno']['contraste_relativo']:.2f} | Silueta: {sil_cos:.4f} | Pureza: {clf_cos['accuracy_pureza']*100:.2f}% | CPCC: {cpcc_cos:.4f}")
     return res
 
 
@@ -328,6 +353,85 @@ def generar_figura_evidencias_experimentales(res_dim, res_norm, res_tfidf, sbert
     print(f"\n[OK] Figura 9 generada con éxito en '{ruta_fig9}'.")
 
 
+def experimento_interaccion_dimension_k(X, y_true, dimensiones=(5, 10, 25, 50, 100, 384), valores_k=(5, 10, 15, 20)):
+    """
+    Evalúa la interacción cruzada entre la dimensión del espacio (D) y el número
+    de clusters (K) mediante un grid search bidimensional (D x K).
+
+    Responde directamente a la observación crítica sobre arquitectura en serie vs
+    interacción entre variables, contrastando si el valor óptimo de K depende o no
+    del grado de compresión dimensional.
+
+    Pre-condiciones:
+        - X: matriz (N, 384) con representaciones densas SBERT.
+        - y_true: array 1D de longitud N con las etiquetas de clase clínica.
+        - dimensiones: secuencia de dimensiones D a proyectar con PCA.
+        - valores_k: secuencia de números de clusters K a evaluar.
+
+    Post-condiciones:
+        - Devuelve matrices de contingencia (D x K) de Pureza, Silueta y Macro-F1.
+    """
+    print("\n[EXPERIMENTO 5] Interacción Bidimensional de Hiperparámetros (Dimensión D x Clusters K)...")
+    tabla_pureza = {}
+    tabla_silueta = {}
+    tabla_f1 = {}
+    registros = []
+
+    N, D_orig = X.shape
+
+    for d in dimensiones:
+        if d < D_orig:
+            pca = PCA(n_components=d, random_state=42)
+            X_red = pca.fit_transform(X)
+        else:
+            X_red = X
+
+        D_cos = calcular_matriz_distancias_scratch(X_red, metrica="cosine")
+        motor = MotorJerarquico(tipo_enlace="complete")
+        Z = motor.fit(D_cos)
+
+        tabla_pureza[int(d)] = {}
+        tabla_silueta[int(d)] = {}
+        tabla_f1[int(d)] = {}
+
+        for k in valores_k:
+            pred = cortar_dendrograma_scratch(Z, n_clusters=k)
+            sil = calcular_silhouette_scratch(D_cos, pred)
+            clf = calcular_metricas_clasificacion_clustering_scratch(y_true, pred)
+
+            tabla_pureza[int(d)][int(k)] = round(float(clf["accuracy_pureza"]), 4)
+            tabla_silueta[int(d)][int(k)] = round(float(sil), 4)
+            tabla_f1[int(d)][int(k)] = round(float(clf["f1_macro"]), 4)
+
+            registros.append({
+                "dimension_D": int(d),
+                "k": int(k),
+                "silhouette": round(float(sil), 4),
+                "accuracy_pureza": round(float(clf["accuracy_pureza"]), 4),
+                "f1_macro": round(float(clf["f1_macro"]), 4),
+            })
+
+    header = f"{'Dimensión D':<12} | " + " | ".join([f"K={k} Pureza (Sil)" for k in valores_k])
+    print(header)
+    print("-" * len(header))
+    for d in dimensiones:
+        linea = f"D = {d:<8} | "
+        for k in valores_k:
+            p = tabla_pureza[int(d)][int(k)] * 100
+            s = tabla_silueta[int(d)][int(k)]
+            linea += f"{p:5.1f}% ({s:5.3f})   | "
+        print(linea)
+
+    return {
+        "dimensiones_evaluadas": list(dimensiones),
+        "valores_k_evaluados": list(valores_k),
+        "tabla_pureza": tabla_pureza,
+        "tabla_silueta": tabla_silueta,
+        "tabla_f1": tabla_f1,
+        "registros": registros
+    }
+
+
 def ejecutar_todos_los_experimentos():
     """
     Ejecuta el protocolo experimental completo para alimentar el informe científico-técnico
@@ -335,7 +439,7 @@ def ejecutar_todos_los_experimentos():
     """
     print("\n" + "=" * 70)
     print(" EJECUTANDO BANCO DE PRUEBAS EXPERIMENTAL COMPLETO")
-    print(" (Evidencias de Dimensión, Normalización, TF-IDF y Referencia Random)")
+    print(" (Evidencias de Dimensión, Normalización, TF-IDF, Random e Interacción D x K)")
     print("=" * 70)
 
     from src.config import EMBEDDINGS_FILE, LABELS_FILE, POSTS_TEXT_FILE, METRICS_PROFILING_FILE
@@ -354,12 +458,14 @@ def ejecutar_todos_los_experimentos():
     # 2. Normalización L2
     res_norm = experimento_impacto_normalizacion(textos, y_true, X_norm=X, k_optimo=15)
 
-
     # 3. TF-IDF vs SBERT
     res_tfidf = experimento_representacion_tfidf_vs_sbert(textos, y_true, k_optimo=15)
 
     # 4. Referencia Random
     res_random = experimento_referencia_random(y_true, k_optimo=15)
+
+    # 5. Interacción entre variables (D x K)
+    res_interaccion = experimento_interaccion_dimension_k(X, y_true)
 
     # Guardar evidencias en JSON para el informe
     informe_evidencias = {
@@ -367,6 +473,7 @@ def ejecutar_todos_los_experimentos():
         "impacto_normalizacion": res_norm,
         "comparativa_tfidf_vs_sbert": res_tfidf,
         "referencia_random": res_random,
+        "interaccion_dimension_k": res_interaccion,
     }
 
     ruta_json = os.path.join(str(PROCESSED_DATA_DIR), "evidencias_experimentales.json")
