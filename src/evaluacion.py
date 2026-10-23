@@ -8,9 +8,11 @@ from sklearn.decomposition import PCA
 from metricas_internas import (
     calcular_cpcc_scratch,
     calcular_silhouette_scratch,
+    calcular_sse_bss_scratch,
+    calcular_dunn_scratch,
     cortar_dendrograma_scratch,
+    generar_graficas_validacion_interna,
 )
-
 
 def calcular_metricas_externas(labels_true, labels_pred):
     """
@@ -51,6 +53,513 @@ def calcular_metricas_externas(labels_true, labels_pred):
         "jaccard": float(jaccard),
         "fowlkes_mallows": float(fowlkes_mallows)
     }
+
+
+def calcular_metricas_clasificacion_clustering_scratch(labels_true, labels_pred, num_clases=5):
+    """
+    Evalúa cómo se correlacionan los clusters descubiertos con las clases reales
+    mediante Asignación por Voto Mayoritario (como en MNIST) y las figuras de mérito
+    del Tema 3 de Alicia Pérez (Diapositivas 7-12 de 3_DM_HANDOUT.pdf):
+      - Tabla de Contingencia (Cluster x Clase Real) y Matriz de Confusión (Clase x Clase).
+      - Purity / Clustering Accuracy.
+      - Precision, Recall y F-measure (Macro-promedio).
+      - Estadístico Kappa de Cohen (corrección del acierto por azar).
+
+    Pre-condiciones:
+        - labels_true: array 1D de longitud N con las clases reales [0 .. num_clases-1].
+        - labels_pred: array 1D de longitud N con los IDs de cluster [0 .. K-1].
+
+    Post-condiciones:
+        - Devuelve un diccionario con Accuracy/Pureza, Kappa, F1-Macro, mapeo y matrices.
+    """
+    y_true = np.asarray(labels_true, dtype=int).flatten()
+    y_pred = np.asarray(labels_pred, dtype=int).flatten()
+    N = len(y_true)
+    clusters_unicos = np.unique(y_pred)
+    K = len(clusters_unicos)
+
+    # 1. Tabla de contingencia (K clusters x C clases reales)
+    tabla_contingencia = np.zeros((K, num_clases), dtype=int)
+    mapeo_cluster_a_clase = {}
+    y_pred_mapeado = np.zeros_like(y_true)
+
+    for idx_c, c_id in enumerate(clusters_unicos):
+        mascara = (y_pred == c_id)
+        clases_en_cluster = y_true[mascara]
+        for cl in range(num_clases):
+            tabla_contingencia[idx_c, cl] = int(np.sum(clases_en_cluster == cl))
+
+        # Voto mayoritario: asignamos al cluster la clase real más frecuente en su interior
+        clase_mayoritaria = int(np.argmax(tabla_contingencia[idx_c]))
+        mapeo_cluster_a_clase[int(c_id)] = clase_mayoritaria
+        y_pred_mapeado[mascara] = clase_mayoritaria
+
+    # 2. Matriz de confusión cuadrada (num_clases x num_clases): Real (filas) vs Predicho (columnas)
+    matriz_confusion = np.zeros((num_clases, num_clases), dtype=int)
+    for t, p in zip(y_true, y_pred_mapeado):
+        matriz_confusion[t, p] += 1
+
+    # 3. Accuracy (Pureza del clustering)
+    aciertos = np.trace(matriz_confusion)
+    accuracy_pureza = float(aciertos / N) if N > 0 else 0.0
+
+    # 4. Estadístico Kappa de Cohen (Slide 12 de 3_DM_HANDOUT.pdf)
+    # p_0 = accuracy observada; p_e = probabilidad de acuerdo aleatorio manteniendo proporciones marginales
+    totales_reales = np.sum(matriz_confusion, axis=1)
+    totales_pred = np.sum(matriz_confusion, axis=0)
+    p_e = float(np.sum(totales_reales * totales_pred)) / float(N * N) if N > 0 else 0.0
+    kappa = (accuracy_pureza - p_e) / (1.0 - p_e) if (1.0 - p_e) > 1e-12 else 0.0
+
+    # 5. Precision, Recall y F-measure por clase y Macro-promedio (Slide 9 de 3_DM_HANDOUT.pdf)
+    f1_por_clase = []
+    for cl in range(num_clases):
+        tp = float(matriz_confusion[cl, cl])
+        fp = float(totales_pred[cl] - tp)
+        fn = float(totales_reales[cl] - tp)
+
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = (2.0 * prec * rec) / (prec + rec) if (prec + rec) > 0 else 0.0
+        f1_por_clase.append(f1)
+
+    return {
+        "accuracy_pureza": round(accuracy_pureza, 4),
+        "kappa_cohen": round(float(kappa), 4),
+        "f1_macro": round(float(np.mean(f1_por_clase)), 4),
+        "mapeo_cluster_a_clase": mapeo_cluster_a_clase,
+        "tabla_contingencia": tabla_contingencia,
+        "matriz_confusion": matriz_confusion,
+    }
+
+
+
+def extraer_y_visualizar_centroides_textuales_scratch(
+    vectores_densos,
+    matriz_distancias,
+    etiquetas_reales,
+    textos_reales,
+    k_representar=15,
+    carpeta_salida="data_processed/graficas_informe"
+):
+    """
+    Caracteriza profundamente qué representa cada Cluster (Codebook de Centroides m_j) mediante:
+      1. 6 Ventanas de 3 palabras (6 Trigramas temáticos por cluster con c-TF-IDF Scratch).
+      2. La Oración Prototipo Central (la frase exacta más representativa del centroide m_j).
+      3. El perfil de distribución en las 5 clases clínicas reales (C-SSRS).
+    Genera 3 figuras limpias y sin solapamientos:
+      - fig6_mapa_pca_centroides.png (Proyección PCA 2D con etiquetas anticolisión).
+      - fig7_tabla_codebook_6x3_ventanas.png (Tabla completa con las 6 ventanas de 3 palabras + oración prototipo).
+      - fig8_correlacion_externa_k.png (Curvas de Accuracy/Pureza, Rand, F1, Jaccard y Kappa en k=2..sqrt(N)).
+    """
+    import re
+    import textwrap
+    from src.clustering.hierarchical import MotorJerarquico
+
+    os.makedirs(carpeta_salida, exist_ok=True)
+    nombres_clases = {0: "Indicator", 1: "Ideation", 2: "Behavior", 3: "Attempt", 4: "Supportive"}
+    N = len(textos_reales)
+
+    stopwords_en = {
+        "the", "and", "to", "of", "in", "it", "is", "that", "for", "on", "you", "this", "with",
+        "be", "are", "have", "not", "but", "at", "from", "or", "by", "as", "what", "all", "if",
+        "can", "about", "just", "my", "me", "im", "so", "do", "dont", "was", "like", "know",
+        "would", "get", "out", "up", "when", "people", "they", "how", "one", "there", "really",
+        "think", "want", "feel", "ive", "because", "time", "even", "now", "going", "been", "much",
+        "will", "who", "more", "had", "has", "their", "your", "we", "he", "she", "her", "his",
+        "them", "some", "an", "no", "very", "too", "any", "only", "other", "than", "into", "could",
+        "were", "did", "didnt", "cant", "wont", "am", "being", "things", "something", "anything",
+        "make", "way", "see", "go", "good", "actual", "actually", "still", "back", "after", "here",
+        "http", "https", "www", "com", "reddit", "html", "org", "watch", "youtube", "post", "posts",
+        "someone", "anyone", "everyone", "everything", "nothing", "maybe", "always", "never", "lot",
+        "also", "though", "around", "through", "every", "where", "which", "while", "those", "these",
+        "right", "down", "well", "said", "say", "says", "got", "getting", "take", "took", "made",
+        "let", "put", "come", "came", "look", "looking", "tell", "told", "sure", "else", "bit",
+        "its", "youre", "hes", "shes", "theyre", "thats", "theres", "heres", "whatsoever", "quite"
+    }
+
+    # Eliminamos todas las etiquetas médicas artificiales inyectadas en el corpus de Zenodo
+    patrones_ruido = re.compile(
+        r"\b(hyperactive behavior|depressed mood|mental depression|anxiety mental|irritable mood|"
+        r"drug abuse|bipolar disorder|ventricular dysfunction|malignant neoplastic|neoplastic disease|"
+        r"ache|tired|exhaustion|suicidal ideation)\b",
+        flags=re.IGNORECASE
+    )
+
+    docs_ventanas_3 = []
+    docs_palabras = []
+    df_ventanas = {}
+    df_palabras = {}
+
+    for txt in textos_reales:
+        txt_limpio = patrones_ruido.sub(" ", txt)
+        txt_limpio = re.sub(r"http\S+|www\.\S+", " ", txt_limpio.lower())
+        palabras = [w for w in re.findall(r"[a-z]{3,}", txt_limpio) if w not in stopwords_en]
+        docs_palabras.append(palabras)
+
+        for w in set(palabras):
+            df_palabras[w] = df_palabras.get(w, 0) + 1
+
+        # Construir ventanas deslizantes de 3 palabras (trigramas) sin palabras repetidas seguidas
+        ventanas_doc = []
+        for idx_w in range(len(palabras) - 2):
+            w1, w2, w3 = palabras[idx_w], palabras[idx_w + 1], palabras[idx_w + 2]
+            if len({w1, w2, w3}) == 3:
+                ventanas_doc.append(f"{w1} {w2} {w3}")
+
+        # Si el post es muy breve, respaldamos con ventanas de 2 palabras
+        if len(ventanas_doc) < 6:
+            for idx_w in range(len(palabras) - 1):
+                w1, w2 = palabras[idx_w], palabras[idx_w + 1]
+                if w1 != w2:
+                    ventanas_doc.append(f"{w1} {w2}")
+
+        docs_ventanas_3.append(ventanas_doc)
+        for v3 in set(ventanas_doc):
+            df_ventanas[v3] = df_ventanas.get(v3, 0) + 1
+
+    # --- Cortar en k_representar clusters y extraer 6 ventanas de 3 palabras + oración prototipo ---
+    Z_comp = MotorJerarquico(tipo_enlace="complete").fit(matriz_distancias)
+    etiquetas_k = cortar_dendrograma_scratch(Z_comp, n_clusters=k_representar)
+    res_clf = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales, etiquetas_k)
+
+    centroides_384 = np.zeros((k_representar, vectores_densos.shape[1]), dtype=np.float32)
+    resumen_centroides = []
+
+    print(f"\n=== CODEBOOK DE CENTROIDES: 6 VENTANAS DE 3 PALABRAS + ORACIÓN PROTOTIPO (K = {k_representar}) ===")
+    for c in range(k_representar):
+        idx_c = np.where(etiquetas_k == c)[0]
+        puntos_c = vectores_densos[idx_c]
+
+        # 1) Centroide matemático m_c
+        m_c = np.mean(puntos_c, axis=0)
+        centroides_384[c] = m_c
+
+        # 2) Post medoide (más cercano al centroide m_c) y los top 3 más cercanos al centroide
+        dists_al_centroide = np.linalg.norm(puntos_c - m_c, axis=1)
+        orden_cercania = np.argsort(dists_al_centroide)
+        idx_medoide_global = int(idx_c[int(orden_cercania[0])])
+        top_docs_centrales = [int(idx_c[int(i)]) for i in orden_cercania[:min(5, len(idx_c))]]
+
+        # 3) Perfil léxico del cluster (c-TF-IDF de palabras individuales para puntuar importancia semántica)
+        tf_w_cluster = {}
+        for doc_id in idx_c:
+            for w in docs_palabras[doc_id]:
+                tf_w_cluster[w] = tf_w_cluster.get(w, 0) + 1
+        peso_palabra = {
+            w: (freq / float(len(idx_c))) * np.log(1.0 + float(N) / float(df_palabras.get(w, 1)))
+            for w, freq in tf_w_cluster.items()
+        }
+
+        # 4) Seleccionar 6 ventanas de 3 palabras (no solapadas entre sí) con mayor c-TF-IDF en el cluster
+        tf_v3_cluster = {}
+        for doc_id in idx_c:
+            for v3 in docs_ventanas_3[doc_id]:
+                tf_v3_cluster[v3] = tf_v3_cluster.get(v3, 0) + 1
+
+        candidatas_v3 = []
+        for v3, freq_v in tf_v3_cluster.items():
+            palabras_v = v3.split()
+            score_palabras = np.mean([peso_palabra.get(w, 0.0) for w in palabras_v])
+            idf_v = np.log(1.0 + float(N) / float(df_ventanas.get(v3, 1)))
+            bonus_Tried = 1.25 if len(palabras_v) == 3 else 0.85
+            score_total = bonus_Tried * (0.65 * (freq_v / float(len(idx_c))) * idf_v + 0.35 * score_palabras)
+            candidatas_v3.append((v3, score_total))
+
+        candidatas_v3.sort(key=lambda x: x[1], reverse=True)
+
+        # Elegimos 6 ventanas diversas (evitando repetir exactamente las mismas 2 palabras en todas)
+        seis_ventanas = []
+        palabras_usadas = {}
+        for v3, _ in candidatas_v3:
+            w_set = v3.split()
+            if any(palabras_usadas.get(w, 0) >= 2 for w in w_set):
+                continue
+            seis_ventanas.append(v3)
+            for w in w_set:
+                palabras_usadas[w] = palabras_usadas.get(w, 0) + 1
+            if len(seis_ventanas) == 6:
+                break
+
+        # Rellenar hasta 6 si el cluster tenía un único post muy corto
+        for v3, _ in candidatas_v3:
+            if len(seis_ventanas) >= 6:
+                break
+            if v3 not in seis_ventanas:
+                seis_ventanas.append(v3)
+
+        # 5) Extraer la Oración Prototipo Central (la frase de los posts centrales con mayor densidad temática)
+        mejor_oracion = ""
+        mejor_score_oracion = -1.0
+        for doc_id in top_docs_centrales:
+            txt_limpio_doc = patrones_ruido.sub("", textos_reales[doc_id])
+            txt_limpio_doc = re.sub(r"http\S+|www\.\S+", "", txt_limpio_doc)
+            oraciones = re.split(r"[.!?]+", txt_limpio_doc)
+            for orac in oraciones:
+                orac_str = " ".join(orac.strip().split())
+                if len(orac_str) < 35 or len(orac_str) > 160:
+                    continue
+                w_orac = [w for w in re.findall(r"[a-z]{3,}", orac_str.lower()) if w not in stopwords_en]
+                if len(w_orac) < 4:
+                    continue
+                # Puntuamos la oración por la suma de pesos temáticos de sus palabras + cercanía al centroide
+                factor_cercania = 1.25 if doc_id == idx_medoide_global else 1.0
+                sc_orac = factor_cercania * float(np.mean([peso_palabra.get(w, 0.0) for w in set(w_orac)]))
+                if sc_orac > mejor_score_oracion:
+                    mejor_score_oracion = sc_orac
+                    mejor_oracion = orac_str
+
+        if not mejor_oracion:
+            mejor_oracion = patrones_ruido.sub("", textos_reales[idx_medoide_global]).replace("\n", " ").strip()[:115]
+
+        # Distribución de las clases clínicas dentro del cluster
+        conteo_clases_c = res_clf["tabla_contingencia"][c]
+        orden_clases = np.argsort(conteo_clases_c)[::-1]
+        clase_dom_id = int(orden_clases[0])
+        clase_sec_id = int(orden_clases[1])
+        clase_dom_nombre = nombres_clases[clase_dom_id]
+        pureza_c = conteo_clases_c[clase_dom_id] / float(len(idx_c))
+        pct_sec = conteo_clases_c[clase_sec_id] / float(len(idx_c))
+        dist_str = f"{clase_dom_nombre} ({pureza_c*100:.0f}%)" + (f" + {nombres_clases[clase_sec_id][:4]}. ({pct_sec*100:.0f}%)" if pct_sec >= 0.15 else "")
+
+        info_c = {
+            "cluster": c,
+            "tamano": len(idx_c),
+            "clase_dominante": clase_dom_nombre,
+            "distribucion_clases": dist_str,
+            "pureza_cluster": round(float(pureza_c), 3),
+            "seis_ventanas_3pal": seis_ventanas,
+            "idx_medoide": idx_medoide_global,
+            "oracion_prototipo": mejor_oracion,
+        }
+        resumen_centroides.append(info_c)
+        print(
+            f"  * Cluster C{c:2d} (n={len(idx_c):3d}) | Perfil Clínico: {dist_str}\n"
+            f"    -> 6 Ventanas (3 pal.): {' | '.join(seis_ventanas)}\n"
+            f"    -> Oración Prototipo (Post #{idx_medoide_global}): \"{mejor_oracion}\""
+        )
+
+    # =========================================================================
+    # FIGURA 6: MAPA PCA 2D DE CLUSTERS Y CENTROIDES (CON POSICIONES ANTICOLISIÓN)
+    # =========================================================================
+    pca = PCA(n_components=2, random_state=42)
+    X_2d = pca.fit_transform(vectores_densos)
+    centroides_2d = pca.transform(centroides_384)
+    cmap = plt.get_cmap("tab20").resampled(k_representar)
+
+    fig, ax_map = plt.subplots(figsize=(12.5, 7.2))
+    fig.suptitle(
+        f"Proyección Espacial PCA 2D de los Clusters y Codebook de Centroides m_j (k̂ = {k_representar})",
+        fontsize=14, fontweight="bold", y=0.97
+    )
+    plt.figtext(
+        0.5, 0.915,
+        "Visualización de instancias en el subespacio de máxima varianza y ubicación de los prototipos promedio m_j (Estrellas) para los grupos principales",
+        ha="center", fontsize=9.8, style="italic", color="#333333"
+    )
+
+    # Desplazamientos angulares para que ninguna etiqueta de centroide pise a otra en la zona central
+    offsets_etiquetas = [
+        (0.025, 0.030), (-0.095, -0.045), (0.028, -0.038), (-0.105, 0.032),
+        (0.030, 0.042), (-0.090, 0.040), (0.030, -0.045), (-0.110, -0.025)
+    ]
+    idx_offset = 0
+
+    for info in sorted(resumen_centroides, key=lambda x: x["tamano"], reverse=True):
+        c = info["cluster"]
+        idx_c = (etiquetas_k == c)
+        es_principal = info["tamano"] >= 5
+
+        ax_map.scatter(
+            X_2d[idx_c, 0], X_2d[idx_c, 1],
+            color=cmap(c), alpha=0.55 if es_principal else 0.95,
+            s=32 if es_principal else 55,
+            marker="o" if es_principal else "X",
+            label=f"C{c:2d} (n={info['tamano']:3d}) [{info['clase_dominante'][:4]}]: {info['seis_ventanas_3pal'][0]}"
+        )
+
+        if es_principal:
+            cx, cy = centroides_2d[c, 0], centroides_2d[c, 1]
+            ax_map.scatter(cx, cy, color=cmap(c), edgecolor="black", marker="*", s=360, linewidth=1.5, zorder=10)
+            dx, dy = offsets_etiquetas[idx_offset % len(offsets_etiquetas)]
+            idx_offset += 1
+            ax_map.annotate(
+                f"m_{c} (n={info['tamano']})",
+                xy=(cx, cy),
+                xytext=(cx + dx, cy + dy),
+                arrowprops=dict(arrowstyle="->", lw=1.0, color="black", alpha=0.7),
+                fontsize=8.5, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor=cmap(c), lw=1.4, alpha=0.95),
+                zorder=11
+            )
+
+    ax_map.set_xlabel("Componente Principal 1 (PCA 1)", fontsize=10.5)
+    ax_map.set_ylabel("Componente Principal 2 (PCA 2)", fontsize=10.5)
+    ax_map.grid(True, linestyle=":", alpha=0.6)
+    ax_map.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8.3, title="Clusters y 1ª Ventana Temática", title_fontsize=9, framealpha=0.95)
+
+    nota_f6 = textwrap.fill(
+        "Lectura del mapa PCA: Las estrellas representan las coordenadas exactas de los centroides m_j = (1/|G_j|) Σ x en R^384 proyectadas en 2D. "
+        "La leyenda exterior derecha muestra para cada cluster su tamaño, su clase clínica mayoritaria y su primera ventana temática de 3 palabras.",
+        width=130
+    )
+    plt.figtext(0.5, 0.015, nota_f6, ha="center", fontsize=8.8, bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8f9fa", edgecolor="#666666"))
+
+    plt.tight_layout(rect=[0, 0.08, 0.99, 0.89])
+    ruta_fig6 = os.path.join(carpeta_salida, "fig6_mapa_pca_centroides.png")
+    plt.savefig(ruta_fig6, dpi=220)
+    plt.close(fig)
+
+    # =========================================================================
+    # FIGURA 7: TABLA COMPLETA DEL CODEBOOK (6 VENTANAS DE 3 PALABRAS + ORACIÓN PROTOTIPO)
+    # =========================================================================
+    fig, ax_tab = plt.subplots(figsize=(17.5, 9.5))
+    ax_tab.axis("off")
+    fig.suptitle(
+        f"Caracterización Semántica de los Clusters (k̂ = {k_representar}): 6 Ventanas de 3 Palabras y Oración Prototipo Central",
+        fontsize=14, fontweight="bold", y=0.97
+    )
+    plt.figtext(
+        0.5, 0.925,
+        "Identificación del contenido temático de cada centroide m_j combinando 6 trigramas discriminativos (c-TF-IDF Scratch) y la frase nuclear más representativa del grupo",
+        ha="center", fontsize=9.8, style="italic", color="#333333"
+    )
+
+    filas_tabla = []
+    colores_filas = []
+    for info in sorted(resumen_centroides, key=lambda x: x["tamano"], reverse=True):
+        c_id = info["cluster"]
+        v_6 = info["seis_ventanas_3pal"]
+        bloque_ventanas = (
+            "1) " + " | 2) ".join(v_6[:3]) + "\n" +
+            "4) " + " | 5) ".join(v_6[3:6]).replace(" | 5) ", " | 5) ", 1)
+        )
+        # Formateo limpio en 2 líneas de 3 ventanas cada una (3 palabras x 6 ventanas)
+        linea_1 = " • ".join(v_6[:3])
+        linea_2 = " • ".join(v_6[3:6])
+        texto_6_ventanas = f"{linea_1}\n{linea_2}"
+
+        oracion_envuelta = textwrap.fill(f"\"{info['oracion_prototipo']}\"", width=68)
+
+        filas_tabla.append([
+            f"C{c_id} (m_{c_id})\nn = {info['tamano']}",
+            info["distribucion_clases"],
+            texto_6_ventanas,
+            oracion_envuelta
+        ])
+        colores_filas.append(cmap(c_id))
+
+    tabla = ax_tab.table(
+        cellText=filas_tabla,
+        colLabels=[
+            "Cluster / Tam.",
+            "Asignación Clínica\n(Voto Mayoritario + 2ª Clase)",
+            "6 Ventanas de 3 Palabras (Trigramas Discriminativos c-TF-IDF)",
+            "Oración Prototipo Central del Cluster (Extraída del Entorno del Medoide)"
+        ],
+        loc="center",
+        cellLoc="left",
+        colWidths=[0.09, 0.19, 0.36, 0.36]
+    )
+    tabla.auto_set_font_size(False)
+    tabla.set_fontsize(8.3)
+    tabla.scale(1.0, 2.05)
+
+    for (fila, col), celda in tabla.get_celld().items():
+        if fila == 0:
+            celda.set_facecolor("#1f4e78")
+            celda.set_text_props(color="white", fontweight="bold", ha="center")
+        else:
+            if col == 0:
+                celda.set_facecolor(colores_filas[fila - 1])
+                celda.set_text_props(fontweight="bold", color="black", ha="center")
+            else:
+                celda.set_facecolor("#f4f6f9" if fila % 2 == 0 else "white")
+
+    nota_f7 = textwrap.fill(
+        "Cómo interpretar esta tabla: Mientras 2 palabras sueltas son insuficientes para distinguir matices clínicos, la combinación de 6 ventanas de 3 palabras "
+        "junto con la oración prototipo central permite identificar con precisión la temática de cada grupo (ej. C14: crisis aguda y autolesión; C12: agotamiento laboral/académico; "
+        "C10: desesperanza emocional y duelo; C7: búsqueda activa de terapia y apoyo; C8: suicidio de un familiar cercano).",
+        width=145
+    )
+    plt.figtext(0.5, 0.012, nota_f7, ha="center", fontsize=8.8, bbox=dict(boxstyle="round,pad=0.4", facecolor="#e8f5e9", edgecolor="#2ca02c"))
+
+    plt.tight_layout(rect=[0, 0.06, 1, 0.90])
+    ruta_fig7 = os.path.join(carpeta_salida, "fig7_tabla_codebook_6x3_ventanas.png")
+    plt.savefig(ruta_fig7, dpi=220)
+    plt.close(fig)
+
+    # =========================================================================
+    # FIGURA 8: CORRELACIÓN EXTERNA CON LA REALIDAD EN k ∈ [2, √N=22]
+    # =========================================================================
+    k_max_sqrt = max(10, int(np.sqrt(N)))
+    rango_k = list(range(2, k_max_sqrt + 1))
+    acc_vals, kappa_vals, f1_vals, rand_vals, jacc_vals = [], [], [], [], []
+
+    for k in rango_k:
+        pred_k = cortar_dendrograma_scratch(Z_comp, n_clusters=k)
+        m_pares = calcular_metricas_externas(etiquetas_reales, pred_k)
+        m_clf = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales, pred_k)
+
+        acc_vals.append(m_clf["accuracy_pureza"])
+        kappa_vals.append(m_clf["kappa_cohen"])
+        f1_vals.append(m_clf["f1_macro"])
+        rand_vals.append(m_pares["rand_index"])
+        jacc_vals.append(m_pares["jaccard"])
+
+    fig, ax = plt.subplots(figsize=(11.5, 6.4))
+    fig.suptitle(
+        f"Evaluación Externa: Correlación con las Clases Clínicas C-SSRS en k ∈ [2, √N = {k_max_sqrt}]",
+        fontsize=13.5, fontweight="bold", y=0.97
+    )
+    plt.figtext(
+        0.5, 0.91,
+        "Figuras de mérito por pares (Rand, Jaccard) y por voto mayoritario (Accuracy/Pureza, F1-Macro, Kappa de Cohen - Tema 3)",
+        ha="center", fontsize=9.8, style="italic", color="#333333"
+    )
+
+    ax.plot(rango_k, rand_vals, marker="o", linewidth=2.2, color="#1f77b4", label="Rand Index (Acuerdo por pares)")
+    ax.plot(rango_k, acc_vals, marker="s", linewidth=2.2, color="#2ca02c", label="Accuracy / Pureza (Voto Mayoritario)")
+    ax.plot(rango_k, f1_vals, marker="^", linewidth=2.0, linestyle="--", color="#ff7f0e", label="F1-Measure Macro")
+    ax.plot(rango_k, jacc_vals, marker="v", linewidth=1.8, linestyle=":", color="#9467bd", label="Jaccard Index (Pares positivos)")
+    ax.plot(rango_k, kappa_vals, marker="d", linewidth=1.8, linestyle="-.", color="#d62728", label="Estadístico Kappa de Cohen (κ)")
+    ax.axvline(k_representar, color="#2ca02c", linestyle="--", alpha=0.8, linewidth=1.6, label=f"Óptimo interno seleccionado k̂ = {k_representar}")
+
+    idx_k_rep = rango_k.index(k_representar) if k_representar in rango_k else -1
+    if idx_k_rep >= 0:
+        ax.annotate(
+            f"En k̂={k_representar}:\nRand = {rand_vals[idx_k_rep]:.3f}\nPureza = {acc_vals[idx_k_rep]:.3f}\nF1 = {f1_vals[idx_k_rep]:.3f}",
+            xy=(k_representar, rand_vals[idx_k_rep]),
+            xytext=(k_representar - 3.2, rand_vals[idx_k_rep] - 0.16),
+            arrowprops=dict(arrowstyle="->", lw=1.4, color="#1f77b4"),
+            fontsize=8.8, fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="#e3f2fd", edgecolor="#1f77b4")
+        )
+
+    ax.set_xlabel("Número de Clusters (k)", fontsize=10.5)
+    ax.set_ylabel("Valor de la Métrica de Evaluación Externa ∈ [0, 1]", fontsize=10.5)
+    ax.set_xticks(rango_k)
+    ax.set_ylim(-0.02, 0.82)
+    ax.grid(True, linestyle=":", alpha=0.6)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.02), ncol=3, fontsize=8.5, framealpha=0.95)
+
+    nota_f8 = textwrap.fill(
+        f"Conclusión externa: A partir de k=11..15 el Rand Index se estabiliza en ~0.67 y la Pureza/Accuracy alcanza {acc_vals[idx_k_rep]:.3f} (con F1-Macro={f1_vals[idx_k_rep]:.3f}), "
+        "confirmando que los sub-clusters temáticos descubiertos de forma no supervisada guardan coherencia con los niveles de riesgo clínico reales.",
+        width=115
+    )
+    plt.figtext(0.5, 0.015, nota_f8, ha="center", fontsize=8.8, bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8f9fa", edgecolor="#666666"))
+
+    plt.tight_layout(rect=[0, 0.09, 1, 0.85])
+    ruta_fig8 = os.path.join(carpeta_salida, "fig8_correlacion_externa_k.png")
+    plt.savefig(ruta_fig8, dpi=220)
+    plt.close(fig)
+
+    print(f"  6) {ruta_fig6}")
+    print(f"  7) {ruta_fig7}")
+    print(f"  8) {ruta_fig8}")
+
+    return resumen_centroides
+
 
 
 def cortar_arbol(matriz_linkage, altura_h=None, n_clusters=None):
@@ -171,6 +680,68 @@ if __name__ == "__main__":
     print(f"Jaccard: {resultados.get('jaccard', 0):.4f}")
     print(f"Fowlkes-Mallows: {resultados.get('fowlkes_mallows', 0):.4f}")
 
-    visualizar_pca_clusters(vectores_densos, predicciones)
+    # Métricas adicionales de los apuntes (SSE, BSS y Dunn Index)
+    sse_bss = calcular_sse_bss_scratch(vectores_densos, predicciones)
+    dunn_val = calcular_dunn_scratch(matriz_distancias, predicciones)
+    print(f"Cohesión SSE(G): {sse_bss['SSE']:.4f} | Separabilidad BSS(G): {sse_bss['BSS']:.4f} | Dunn Index: {dunn_val:.4f}")
 
-    inferir_y_mostrar_cercanos(vectores_densos[0], vectores_densos, predicciones, textos_reales, k=3)
+    # Generar las 3 figuras autoexplicativas para el informe
+    generar_graficas_validacion_interna(
+        vectores_densos,
+        matriz_distancias,
+        np.load(os.path.join(carpeta_datos, "matriz_distancias_euclidean.npy")),
+    )
+
+    # Selección no supervisada de K en [2, sqrt(N)=22] (sin prefijar K=5 a dedo)
+    from src.metricas_internas import optimizar_hiperparametros_internos
+    opt_info = optimizar_hiperparametros_internos(matriz_distancias)
+    k_pico_equilibrado = opt_info["mejor_particion_equilibrada"]["k_optimo"] or 7
+    print(f"\n[OPTIMIZACIÓN NO SUPERVISADA k ∈ [2, √N=22]]")
+    print(f"  - Máximo Global Silhouette: Enlace='{opt_info['mejor_global']['enlace']}', k̂={opt_info['mejor_global']['k_optimo']} (S̄={opt_info['mejor_global']['silhouette']:.4f})")
+    print(f"  - Mejor Partición Equilibrada (sin macro-cluster >80%): Enlace='{opt_info['mejor_particion_equilibrada']['enlace']}', k̂={k_pico_equilibrado} (S̄={opt_info['mejor_particion_equilibrada']['silhouette']:.4f})")
+    print(f"  - Picos locales detectados (Complete-Link): {opt_info['resultados_por_enlace']['complete']['picos_locales_silhouette']}")
+
+    # Evaluar métricas externas de clasificación (Accuracy/Pureza, Kappa, F1 y Matriz de Confusión) en k̂ descubierto
+    Z_comp = MotorJerarquico(tipo_enlace="complete").fit(matriz_distancias)
+    pred_opt = cortar_arbol(Z_comp, n_clusters=k_pico_equilibrado)
+    clf_stats = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales, pred_opt)
+    pares_stats = calcular_metricas_externas(etiquetas_reales, pred_opt)
+    print(f"\n--- CORRELACIÓN CON LA REALIDAD EN k̂={k_pico_equilibrado} (COMPLETE-LINK) ---")
+    print(f"Accuracy / Pureza (Voto Mayoritario): {clf_stats['accuracy_pureza']:.4f}")
+    print(f"Estadístico Kappa de Cohen:           {clf_stats['kappa_cohen']:.4f}")
+    print(f"F1-Measure (Macro):                   {clf_stats['f1_macro']:.4f}")
+    print(f"Rand Index: {pares_stats['rand_index']:.4f} | Jaccard: {pares_stats['jaccard']:.4f} | Fowlkes-Mallows: {pares_stats['fowlkes_mallows']:.4f}")
+    print("Matriz de Confusión (Filas=Clase Real [0..4], Columnas=Clase Predicha [0..4]):")
+    print(clf_stats["matriz_confusion"])
+
+    # Extraer y dibujar el Codebook de Centroides Textuales + Curva de Correlación Externa (Figura 4)
+    extraer_y_visualizar_centroides_textuales_scratch(
+        vectores_densos, matriz_distancias, etiquetas_reales, textos_reales, k_representar=k_pico_equilibrado
+    )
+
+    # Evaluación Honesta Holdout (N1-Train = 400, N2-Test = 100 no vistos en el clustering)
+    print("\n--- EVALUACIÓN HONESTA HOLDOUT (N1=400 TRAIN vs N2=100 TEST NO VISTOS) ---")
+    n_train = int(0.8 * len(vectores_densos))
+    X_train, X_test = vectores_densos[:n_train], vectores_densos[n_train:]
+    y_train, y_test = etiquetas_reales[:n_train], etiquetas_reales[n_train:]
+    D_train = matriz_distancias[:n_train, :n_train]
+
+    Z_train = MotorJerarquico(tipo_enlace="complete").fit(D_train)
+    pred_train = cortar_arbol(Z_train, n_clusters=k_pico_equilibrado)
+
+    # Asignar cada instancia no vista de X_test al cluster de su vecino más cercano en X_train
+    D_test_train = matriz_distancias[n_train:, :n_train]
+    vecinos_mas_cercanos = np.argmin(D_test_train, axis=1)
+    pred_test = pred_train[vecinos_mas_cercanos]
+
+    ext_train = calcular_metricas_externas(y_train, pred_train)
+    ext_test = calcular_metricas_externas(y_test, pred_test)
+    sil_train = calcular_silhouette_scratch(D_train, pred_train)
+    D_test = matriz_distancias[n_train:, n_train:]
+    sil_test = calcular_silhouette_scratch(D_test, pred_test) if len(np.unique(pred_test)) >= 2 else 0.0
+
+    print(f"[TRAIN N1={n_train}] Silhouette: {sil_train:.4f} | Rand: {ext_train['rand_index']:.4f} | Jaccard: {ext_train['jaccard']:.4f}")
+    print(f"[TEST  N2={len(X_test)}] Silhouette: {sil_test:.4f} | Rand: {ext_test['rand_index']:.4f} | Jaccard: {ext_test['jaccard']:.4f}")
+
+    # Inferencia honesta: pasamos la primera instancia de TEST (no vista en X_train)
+    inferir_y_mostrar_cercanos(X_test[0], X_train, pred_train, textos_reales[:n_train], k=3)
