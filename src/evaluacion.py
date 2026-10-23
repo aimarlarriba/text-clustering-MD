@@ -73,22 +73,27 @@ def calcular_metricas_externas(labels_true, labels_pred):
     }
 
 
-def calcular_metricas_clasificacion_clustering_scratch(labels_true, labels_pred, num_clases=5):
+def calcular_metricas_clasificacion_clustering_scratch(labels_true, labels_pred, num_clases=5, mapeo_previo=None):
     """
     Evalúa cómo se correlacionan los clusters descubiertos con las clases reales
     mediante Asignación por Voto Mayoritario (como en MNIST) y las figuras de mérito
     del Tema 3 de Alicia Pérez (Diapositivas 7-12 de 3_DM_HANDOUT.pdf):
       - Tabla de Contingencia (Cluster x Clase Real) y Matriz de Confusión (Clase x Clase).
       - Purity / Clustering Accuracy.
-      - Precision, Recall y F-measure (Macro-promedio).
+      - Precision, Recall y F-measure por clase (per-label), Macro-promedio y Media Ponderada (w.Avg).
       - Estadístico Kappa de Cohen (corrección del acierto por azar).
 
     Pre-condiciones:
         - labels_true: array 1D de longitud N con las clases reales [0 .. num_clases-1].
         - labels_pred: array 1D de longitud N con los IDs de cluster [0 .. K-1].
+        - num_clases: entero >= 2 (por defecto 5 para C-SSRS).
+        - mapeo_previo: dict opcional {cluster_id: clase_id} aprendido en entrenamiento (Train).
+          Si se proporciona, NO se re-optimiza el voto mayoritario con las etiquetas de test,
+          evitando la fuga conceptual de etiquetas (data leakage en Holdout).
 
     Post-condiciones:
-        - Devuelve un diccionario con Accuracy/Pureza, Kappa, F1-Macro, mapeo y matrices.
+        - Devuelve un diccionario exhaustivo con Accuracy/Pureza, Kappa, Macro-F1, Weighted-F1,
+          vectores per-label de precision/recall/f1, soporte por clase, mapeo y matrices.
     """
     y_true = np.asarray(labels_true, dtype=int).flatten()
     y_pred = np.asarray(labels_pred, dtype=int).flatten()
@@ -107,10 +112,15 @@ def calcular_metricas_clasificacion_clustering_scratch(labels_true, labels_pred,
         for cl in range(num_clases):
             tabla_contingencia[idx_c, cl] = int(np.sum(clases_en_cluster == cl))
 
-        # Voto mayoritario: asignamos al cluster la clase real más frecuente en su interior
-        clase_mayoritaria = int(np.argmax(tabla_contingencia[idx_c]))
-        mapeo_cluster_a_clase[int(c_id)] = clase_mayoritaria
-        y_pred_mapeado[mascara] = clase_mayoritaria
+        # Si tenemos un mapeo previo fijado en Train, lo respetamos estrictamente
+        if mapeo_previo is not None and int(c_id) in mapeo_previo:
+            clase_asignada = int(mapeo_previo[int(c_id)])
+        else:
+            # Voto mayoritario en Train: asignamos al cluster la clase real más frecuente
+            clase_asignada = int(np.argmax(tabla_contingencia[idx_c])) if len(clases_en_cluster) > 0 else 0
+
+        mapeo_cluster_a_clase[int(c_id)] = clase_asignada
+        y_pred_mapeado[mascara] = clase_asignada
 
     # 2. Matriz de confusión cuadrada (num_clases x num_clases): Real (filas) vs Predicho (columnas)
     matriz_confusion = np.zeros((num_clases, num_clases), dtype=int)
@@ -128,22 +138,50 @@ def calcular_metricas_clasificacion_clustering_scratch(labels_true, labels_pred,
     p_e = float(np.sum(totales_reales * totales_pred)) / float(N * N) if N > 0 else 0.0
     kappa = (accuracy_pureza - p_e) / (1.0 - p_e) if (1.0 - p_e) > 1e-12 else 0.0
 
-    # 5. Precision, Recall y F-measure por clase y Macro-promedio (Slide 9 de 3_DM_HANDOUT.pdf)
+    # 5. Precision, Recall y F-measure por clase (per-label), Macro y Weighted Average (Slide 9 de 3_DM_HANDOUT.pdf)
+    precision_por_clase = []
+    recall_por_clase = []
     f1_por_clase = []
+    soporte_por_clase = []
+
     for cl in range(num_clases):
         tp = float(matriz_confusion[cl, cl])
         fp = float(totales_pred[cl] - tp)
         fn = float(totales_reales[cl] - tp)
+        soporte = int(totales_reales[cl])
 
         prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
         rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
         f1 = (2.0 * prec * rec) / (prec + rec) if (prec + rec) > 0 else 0.0
-        f1_por_clase.append(f1)
+
+        precision_por_clase.append(round(prec, 4))
+        recall_por_clase.append(round(rec, 4))
+        f1_por_clase.append(round(f1, 4))
+        soporte_por_clase.append(soporte)
+
+    # Weighted Average (w.Avg) ponderado por el soporte real de cada clase clínica
+    pesos = np.array(soporte_por_clase, dtype=float)
+    suma_pesos = np.sum(pesos)
+    if suma_pesos > 0:
+        prec_weighted = float(np.sum(np.array(precision_por_clase) * pesos) / suma_pesos)
+        rec_weighted = float(np.sum(np.array(recall_por_clase) * pesos) / suma_pesos)
+        f1_weighted = float(np.sum(np.array(f1_por_clase) * pesos) / suma_pesos)
+    else:
+        prec_weighted = rec_weighted = f1_weighted = 0.0
 
     return {
         "accuracy_pureza": round(accuracy_pureza, 4),
         "kappa_cohen": round(float(kappa), 4),
         "f1_macro": round(float(np.mean(f1_por_clase)), 4),
+        "f1_weighted": round(f1_weighted, 4),
+        "precision_macro": round(float(np.mean(precision_por_clase)), 4),
+        "precision_weighted": round(prec_weighted, 4),
+        "recall_macro": round(float(np.mean(recall_por_clase)), 4),
+        "recall_weighted": round(rec_weighted, 4),
+        "precision_por_clase": precision_por_clase,
+        "recall_por_clase": recall_por_clase,
+        "f1_por_clase": f1_por_clase,
+        "soporte_por_clase": soporte_por_clase,
         "mapeo_cluster_a_clase": mapeo_cluster_a_clase,
         "tabla_contingencia": tabla_contingencia,
         "matriz_confusion": matriz_confusion,
@@ -647,23 +685,33 @@ def inferir_y_mostrar_cercanos(
 ):
     """
     Asigna una nueva instancia al cluster de su vecino más cercano (1-NN)
-    y recupera las K instancias más afines del corpus de entrenamiento,
-    garantizando coherencia con el espacio métrico y la proyección previa.
+    y recupera las K instancias más afines DENTRO de dicho cluster asignado,
+    cumpliendo estrictamente el requisito del guión de prácticas:
+    "Dada una nueva instancia, asignarle un cluster e indicarlo.
+     Dentro de ese cluster, ofrecer las instancias más cercanas (mostrar texto)".
 
     Pre-condiciones:
-        - vector_nuevo: array 1D de dimensión D_orig o dimensión reducida D_pca.
+        - vector_nuevo: array 1D de dimensión D, o string de texto plano a vectorizar con SBERT.
         - vectores_entrenamiento: array 2D de dimensiones (N_train, D).
         - etiquetas_entrenamiento: array 1D de longitud N_train con los IDs de cluster asignados en train.
         - textos_entrenamiento: lista o array de longitud N_train con los textos correspondientes.
-        - k: entero >= 1 indicando el número de vecinos más próximos a recuperar y mostrar.
+        - k: entero >= 1 indicando el número de vecinos más próximos a recuperar dentro del cluster.
         - metrica: str en {'cosine', 'euclidean'}. Debe coincidir con la métrica del clustering.
         - modelo_pca: objeto PCA ajustado en train (opcional). Si se proporciona y vector_nuevo
           tiene la dimensión original, se proyecta mediante modelo_pca.transform().
 
     Post-condiciones:
-        - Devuelve el ID entero del cluster asignado (etiqueta del vecino 1-NN en entrenamiento).
-        - Muestra en consola la distancia y el contenido textual de los K ejemplos más afines.
+        - Devuelve el ID entero del cluster asignado y la lista de textos más cercanos dentro de él.
     """
+    # Si se recibe una cadena de texto en lenguaje natural, se vectoriza con SBERT
+    if isinstance(vector_nuevo, str):
+        try:
+            from sentence_transformers import SentenceTransformer
+            modelo_sbert = SentenceTransformer("all-MiniLM-L6-v2")
+            vector_nuevo = modelo_sbert.encode([vector_nuevo], normalize_embeddings=True)[0]
+        except Exception as e:
+            raise ValueError(f"No se pudo vectorizar el texto recibido: {e}")
+
     v_nuevo = np.asarray(vector_nuevo, dtype=np.float32)
     X_train = np.asarray(vectores_entrenamiento, dtype=np.float32)
 
@@ -687,15 +735,100 @@ def inferir_y_mostrar_cercanos(
     else:
         raise ValueError(f"Métrica '{metrica}' no soportada (usar 'cosine' o 'euclidean').")
 
-    indices_cercanos = np.argsort(distancias)[:k]
-    cluster_asignado = int(etiquetas_entrenamiento[indices_cercanos[0]])
+    # 1. Asignar el cluster de pertenencia mediante el vecino 1-NN más cercano en el espacio métrico
+    vecino_mas_cercano = int(np.argmin(distancias))
+    cluster_asignado = int(etiquetas_entrenamiento[vecino_mas_cercano])
 
-    print(f"\n--- NUEVO POST ASIGNADO AL CLUSTER: C{cluster_asignado} (Espacio Métrico: {metrica.capitalize()}) ---")
-    print(f"Los {k} posts más parecidos son:")
+    # 2. Filtrar candidatos estrictamente DENTRO del cluster asignado
+    indices_en_cluster = np.where(etiquetas_entrenamiento == cluster_asignado)[0]
+    distancias_en_cluster = distancias[indices_en_cluster]
+    orden_en_cluster = np.argsort(distancias_en_cluster)[:min(k, len(indices_en_cluster))]
+    indices_cercanos = indices_en_cluster[orden_en_cluster]
+
+    print(f"\n--- INFERENCIA: NUEVO POST ASIGNADO AL CLUSTER C{cluster_asignado} (Espacio: {metrica.capitalize()}) ---")
+    print(f"Vecino 1-NN global: Post #{vecino_mas_cercano} (Distancia: {distancias[vecino_mas_cercano]:.4f})")
+    print(f"Top {len(indices_cercanos)} instancias más afines DENTRO DEL CLUSTER C{cluster_asignado} (total en cluster: {len(indices_en_cluster)}):")
+    textos_recuperados = []
     for i, idx in enumerate(indices_cercanos):
-        print(f"  {i + 1}. [Distancia {metrica}: {distancias[idx]:.4f}] -> \"{textos_entrenamiento[idx]}\"")
+        txt = textos_entrenamiento[idx]
+        textos_recuperados.append(txt)
+        print(f"  {i + 1}. [Distancia {metrica}: {distancias[idx]:.4f}] -> \"{txt[:140]}...\"")
 
-    return cluster_asignado
+    return cluster_asignado, textos_recuperados
+
+
+def generar_figura_matriz_confusion_heatmap(
+    matriz_train,
+    matriz_test,
+    nombres_clases=None,
+    carpeta_salida="data_processed/graficas_informe",
+):
+    """
+    Genera la Figura 10 del informe: Heat-Map intuitivo de las Matrices de Confusión
+    (Class-to-Cluster) en Train y Test según lo exigido explícitamente en la rúbrica.
+    Muestra recuentos absolutos y porcentajes normalizados por fila (Recall / Cobertura real).
+    """
+    import textwrap
+    os.makedirs(carpeta_salida, exist_ok=True)
+    if nombres_clases is None:
+        nombres_clases = ["Indicator", "Ideation", "Behavior", "Attempt", "Supportive"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(15.2, 6.8))
+    fig.suptitle(
+        "Matriz de Confusión Class-to-Cluster: Correlación con Niveles Clínicos C-SSRS",
+        fontsize=14, fontweight="bold", y=0.97
+    )
+    plt.figtext(
+        0.5, 0.915,
+        "Asignación por Voto Mayoritario y Evaluación Honesta de Generalización: Train (N1=400) vs Test No Vistos (N2=100)",
+        ha="center", fontsize=9.8, style="italic", color="#333333"
+    )
+
+    matrices = [
+        ("A) Subconjunto Train (N1 = 400)", np.asarray(matriz_train, dtype=float)),
+        ("B) Subconjunto Test - Instancias No Vistas (N2 = 100)", np.asarray(matriz_test, dtype=float))
+    ]
+
+    for idx_ax, (titulo, M) in enumerate(matrices):
+        ax = axes[idx_ax]
+        sumas_filas = np.maximum(M.sum(axis=1, keepdims=True), 1.0)
+        M_norm = M / sumas_filas
+        im = ax.imshow(M_norm, cmap="Blues", vmin=0.0, vmax=1.0)
+
+        # Anotaciones numéricas en cada celda
+        for r in range(M.shape[0]):
+            for c in range(M.shape[1]):
+                cnt = int(M[r, c])
+                pct = M_norm[r, c] * 100.0
+                texto_celda = f"{cnt}\n({pct:.1f}%)"
+                color_texto = "white" if M_norm[r, c] > 0.52 else "black"
+                ax.text(c, r, texto_celda, ha="center", va="center", color=color_texto, fontsize=9.2, fontweight="bold")
+
+        ax.set_title(titulo, fontsize=11, fontweight="bold", pad=10)
+        ax.set_xticks(range(len(nombres_clases)))
+        ax.set_yticks(range(len(nombres_clases)))
+        ax.set_xticklabels(nombres_clases, fontsize=9.5, fontweight="bold")
+        ax.set_yticklabels(nombres_clases, fontsize=9.5, fontweight="bold")
+        ax.set_xlabel("Clase Asignada al Cluster (Voto Mayoritario)", fontsize=10.2)
+        ax.set_ylabel("Clase Real (Ground-Truth C-SSRS)", fontsize=10.2)
+
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("Proporción por Fila (Recall / Cobertura)", fontsize=8.8)
+
+    nota_f10 = textwrap.fill(
+        "Interpretación del Heat-Map: La diagonal principal refleja la pureza temática alcanzada por cada clase clínica mediante voto mayoritario. "
+        "En Test (derecha), la asignación se realiza de forma estrictamente honesta aplicando el mapeo aprendido en Train sin fuga de etiquetas. "
+        "Las mayores confusiones ocurren entre 'Ideation' y 'Attempt', consistente con el gradiente léxico continuo del lenguaje suicida.",
+        width=135
+    )
+    plt.figtext(0.5, 0.015, nota_f10, ha="center", fontsize=8.8, bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8f9fa", edgecolor="#666666"))
+
+    plt.tight_layout(rect=[0, 0.08, 1, 0.89])
+    ruta_fig10 = os.path.join(carpeta_salida, "fig10_matriz_confusion_heatmap.png")
+    plt.savefig(ruta_fig10, dpi=220)
+    plt.close(fig)
+    print(f"  10) {ruta_fig10}")
+    return ruta_fig10
 
 
 def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
@@ -829,24 +962,49 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
     ext_train = calcular_metricas_externas(y_train, pred_train)
     ext_test = calcular_metricas_externas(y_test, pred_test)
     clf_train = calcular_metricas_clasificacion_clustering_scratch(y_train, pred_train)
-    clf_test = calcular_metricas_clasificacion_clustering_scratch(y_test, pred_test)
+    # Evaluación honesta en Test: aplicamos el mapeo de cluster a clase aprendido en Train
+    clf_test = calcular_metricas_clasificacion_clustering_scratch(
+        y_test, pred_test, mapeo_previo=clf_train["mapeo_cluster_a_clase"]
+    )
 
     sil_train = calcular_silhouette_scratch(D_train, pred_train)
     D_test = matriz_distancias[n_train:, n_train:]
     sil_test = calcular_silhouette_scratch(D_test, pred_test) if len(np.unique(pred_test)) >= 2 else 0.0
 
     print(f"\n[TABLA COMPARATIVA HOLDOUT (N_train={n_train} | N_test={len(X_test)})]")
-    print(f"{'Métrica':<30} | {'Train (N1=400)':<15} | {'Test (N2=100)':<15}")
-    print("-" * 66)
-    print(f"{'Class-to-Cluster Accuracy (Pureza)':<30} | {clf_train['accuracy_pureza']*100:6.2f}%         | {clf_test['accuracy_pureza']*100:6.2f}%")
-    print(f"{'Estadístico Kappa de Cohen (κ)':<30} | {clf_train['kappa_cohen']:6.4f}          | {clf_test['kappa_cohen']:6.4f}")
-    print(f"{'Macro F1-Score':<30} | {clf_train['f1_macro']:6.4f}          | {clf_test['f1_macro']:6.4f}")
-    print(f"{'Rand Index (Pares)':<30} | {ext_train['rand_index']:6.4f}          | {ext_test['rand_index']:6.4f}")
-    print(f"{'Jaccard Index (Pares)':<30} | {ext_train['jaccard']:6.4f}          | {ext_test['jaccard']:6.4f}")
-    print(f"{'Silhouette Score':<30} | {sil_train:6.4f}          | {sil_test:6.4f}")
+    print(f"{'Métrica':<32} | {'Train (N1=400)':<15} | {'Test (N2=100)':<15}")
+    print("-" * 68)
+    print(f"{'Class-to-Cluster Accuracy':<32} | {clf_train['accuracy_pureza']*100:6.2f}%         | {clf_test['accuracy_pureza']*100:6.2f}%")
+    print(f"{'Estadístico Kappa de Cohen (κ)':<32} | {clf_train['kappa_cohen']:6.4f}          | {clf_test['kappa_cohen']:6.4f}")
+    print(f"{'Macro F1-Score':<32} | {clf_train['f1_macro']:6.4f}          | {clf_test['f1_macro']:6.4f}")
+    print(f"{'Weighted F1-Score (w.Avg)':<32} | {clf_train['f1_weighted']:6.4f}          | {clf_test['f1_weighted']:6.4f}")
+    print(f"{'Precision (Weighted Avg)':<32} | {clf_train['precision_weighted']:6.4f}          | {clf_test['precision_weighted']:6.4f}")
+    print(f"{'Recall (Weighted Avg)':<32} | {clf_train['recall_weighted']:6.4f}          | {clf_test['recall_weighted']:6.4f}")
+    print(f"{'Rand Index (Pares)':<32} | {ext_train['rand_index']:6.4f}          | {ext_test['rand_index']:6.4f}")
+    print(f"{'Jaccard Index (Pares)':<32} | {ext_train['jaccard']:6.4f}          | {ext_test['jaccard']:6.4f}")
+    print(f"{'Silhouette Score':<32} | {sil_train:6.4f}          | {sil_test:6.4f}")
 
-    print("\nMatriz de Confusión en TEST (100 instancias no vistas, Voto Mayoritario):")
-    print(clf_test["matriz_confusion"])
+    print("\n[DESGLOSE POR CLASE CLÍNICA C-SSRS EN TEST (N2=100)]")
+    print(f"{'Clase Clínica':<15} | {'Prec':<8} | {'Rec':<8} | {'F1':<8} | {'Soporte':<8}")
+    print("-" * 55)
+    nombres_c = ["Indicator", "Ideation", "Behavior", "Attempt", "Supportive"]
+    for idx_cl, nom in enumerate(nombres_c):
+        print(
+            f"{nom:<15} | {clf_test['precision_por_clase'][idx_cl]:6.4f}   | "
+            f"{clf_test['recall_por_clase'][idx_cl]:6.4f}   | "
+            f"{clf_test['f1_por_clase'][idx_cl]:6.4f}   | "
+            f"{clf_test['soporte_por_clase'][idx_cl]:4d}"
+        )
+    print(f"{'Macro Avg':<15} | {clf_test['precision_macro']:6.4f}   | {clf_test['recall_macro']:6.4f}   | {clf_test['f1_macro']:6.4f}   | {len(y_test):4d}")
+    print(f"{'Weighted Avg':<15} | {clf_test['precision_weighted']:6.4f}   | {clf_test['recall_weighted']:6.4f}   | {clf_test['f1_weighted']:6.4f}   | {len(y_test):4d}")
+
+    # Generar la Figura 10: Heat-Map intuitivo de las Matrices de Confusión (Train y Test)
+    generar_figura_matriz_confusion_heatmap(
+        clf_train["matriz_confusion"],
+        clf_test["matriz_confusion"],
+        nombres_clases=nombres_c,
+        carpeta_salida=carpeta_salida,
+    )
 
     # Validación Holdout Repetida (5 particiones aleatorias 80/20) para medir dispersión estadística (std)
     rep_test_acc, rep_test_rand, rep_test_f1 = [], [], []
@@ -862,7 +1020,10 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
         nn_rep = np.argmin(D_te_tr, axis=1)
         p_te_rep = p_tr_rep[nn_rep]
 
-        c_te = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales[idx_te], p_te_rep)
+        c_tr = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales[idx_tr], p_tr_rep)
+        c_te = calcular_metricas_clasificacion_clustering_scratch(
+            etiquetas_reales[idx_te], p_te_rep, mapeo_previo=c_tr["mapeo_cluster_a_clase"]
+        )
         e_te = calcular_metricas_externas(etiquetas_reales[idx_te], p_te_rep)
         rep_test_acc.append(c_te["accuracy_pureza"])
         rep_test_rand.append(e_te["rand_index"])
@@ -891,6 +1052,7 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
                 "accuracy_pureza": float(clf_train["accuracy_pureza"]),
                 "kappa_cohen": float(clf_train["kappa_cohen"]),
                 "f1_macro": float(clf_train["f1_macro"]),
+                "f1_weighted": float(clf_train["f1_weighted"]),
                 "silhouette": float(sil_train),
                 "rand": float(ext_train["rand_index"]),
                 "jaccard": float(ext_train["jaccard"]),
@@ -899,6 +1061,7 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
                 "accuracy_pureza": float(clf_test["accuracy_pureza"]),
                 "kappa_cohen": float(clf_test["kappa_cohen"]),
                 "f1_macro": float(clf_test["f1_macro"]),
+                "f1_weighted": float(clf_test["f1_weighted"]),
                 "silhouette": float(sil_test),
                 "rand": float(ext_test["rand_index"]),
                 "jaccard": float(ext_test["jaccard"]),

@@ -59,6 +59,18 @@ def experimento_impacto_dimensionalidad(X, y_true, k_optimo=15, dimensiones=(2, 
     """
     Evalúa empíricamente si conviene hacer el clustering antes o después de reducir
     la dimensión del espacio mediante PCA, y qué dimensión ofrece mejor class-to-cluster accuracy.
+    Para evitar la asunción desacoplada rígida de k=15, evalúa tanto el valor de referencia k=15
+    como el k óptimo local k*(D) descubierto en cada subespacio comprimido.
+
+    Pre-condiciones:
+        - X: matriz numpy 2D (N, 384) con los embeddings SBERT.
+        - y_true: array 1D con las etiquetas reales C-SSRS.
+        - k_optimo: entero >= 2 con el k de referencia.
+        - dimensiones: tupla de dimensiones D crecientes a proyectar con PCA.
+
+    Post-condiciones:
+        - Devuelve una lista de registros con varianza explicada, silueta, pureza,
+          k óptimo descubierto y tiempo por dimensión.
     """
     print("\n[EXPERIMENTO 1] Impacto de la Dimensión del Espacio (PCA vs Original 384D)...")
     N, D_orig = X.shape
@@ -79,25 +91,39 @@ def experimento_impacto_dimensionalidad(X, y_true, k_optimo=15, dimensiones=(2, 
         motor = MotorJerarquico(tipo_enlace="complete")
         Z = motor.fit(D_cos)
 
+        # 1. Evaluación en k de referencia (fijo k=15)
         pred = cortar_dendrograma_scratch(Z, n_clusters=k_optimo)
         cpcc = calcular_cpcc_scratch(D_cos, Z)
         sil = calcular_silhouette_scratch(D_cos, pred)
         clf = calcular_metricas_clasificacion_clustering_scratch(y_true, pred)
         ext = calcular_metricas_externas(y_true, pred)
+
+        # 2. Búsqueda acoplada del K óptimo en este subespacio específico k*(D)
+        mejor_sil_d, mejor_k_d = -1.0, k_optimo
+        for k_c in range(2, 23):
+            p_c = cortar_dendrograma_scratch(Z, n_clusters=k_c)
+            s_c = calcular_silhouette_scratch(D_cos, p_c)
+            if s_c > mejor_sil_d:
+                mejor_sil_d, mejor_k_d = s_c, k_c
+
         t_total = time.time() - t0
 
         registro = {
             "dimension_D": int(d),
             "varianza_explicada_acumulada": round(varianza_exp, 4),
+            "k_referencia": int(k_optimo),
+            "k_optimo_subespacio": int(mejor_k_d),
+            "silhouette_k_optimo": round(float(mejor_sil_d), 4),
             "cpcc": round(float(cpcc), 4),
             "silhouette": round(float(sil), 4),
             "accuracy_pureza": round(float(clf["accuracy_pureza"]), 4),
             "f1_macro": round(float(clf["f1_macro"]), 4),
+            "f1_weighted": round(float(clf.get("f1_weighted", clf["f1_macro"])), 4),
             "rand_index": round(float(ext["rand_index"]), 4),
             "tiempo_seg": round(t_total, 3),
         }
         resultados_dim.append(registro)
-        print(f"  D = {d:3d} (Varianza: {varianza_exp*100:5.1f}%) -> Silueta: {sil:6.4f} | Pureza: {clf['accuracy_pureza']*100:5.2f}% | CPCC: {cpcc:6.4f} | Tiempo: {t_total:5.2f}s")
+        print(f"  D = {d:3d} (Var: {varianza_exp*100:5.1f}%) -> Silueta: {sil:6.4f} | Pureza: {clf['accuracy_pureza']*100:5.2f}% | k*(D)={mejor_k_d} (Sil={mejor_sil_d:.4f}) | Tiempo: {t_total:5.2f}s")
 
     return resultados_dim
 
@@ -432,6 +458,59 @@ def experimento_interaccion_dimension_k(X, y_true, dimensiones=(5, 10, 25, 50, 1
     }
 
 
+def experimento_baseline_kmeans_externo(X, y_true, k_optimo=15, n_init=10):
+    """
+    Establece una comparativa formal frente a un algoritmo de clustering externo
+    estándar (K-Means de Scikit-Learn), respondiendo al requisito explícito de la rúbrica:
+    "¿Baseline? e.g. otros algoritmos externos / Distintos algoritmos de clustering".
+
+    Pre-condiciones:
+        - X: matriz (N, D) con representaciones densas normalizadas.
+        - y_true: array 1D de longitud N con las clases clínicas reales C-SSRS.
+        - k_optimo: número de clusters a contrastar (por defecto 15).
+
+    Post-condiciones:
+        - Devuelve un diccionario con las métricas de K-Means (Pureza, Silueta, F1, Rand, tiempo)
+          y la comparativa formal frente al clustering jerárquico aglomerativo Scratch.
+    """
+    from sklearn.cluster import KMeans
+    print(f"\n[EXPERIMENTO 6] Baseline Externo: Comparativa frente a K-Means de Scikit-Learn (K={k_optimo})...")
+
+    t0 = time.time()
+    kmeans = KMeans(n_clusters=k_optimo, n_init=n_init, random_state=42)
+    pred_kmeans = kmeans.fit_predict(X)
+    t_kmeans = time.time() - t0
+
+    # Distancia Coseno para evaluar Silueta en el mismo espacio métrico
+    D_cos = calcular_matriz_distancias_scratch(X, metrica="cosine")
+    sil_kmeans = calcular_silhouette_scratch(D_cos, pred_kmeans)
+    clf_kmeans = calcular_metricas_clasificacion_clustering_scratch(y_true, pred_kmeans)
+    ext_kmeans = calcular_metricas_externas(y_true, pred_kmeans)
+
+    res = {
+        "algoritmo": "K-Means (Scikit-Learn)",
+        "k_clusters": int(k_optimo),
+        "tiempo_ajuste_seg": round(t_kmeans, 4),
+        "silhouette_coseno": round(float(sil_kmeans), 4),
+        "accuracy_pureza": round(float(clf_kmeans["accuracy_pureza"]), 4),
+        "kappa_cohen": round(float(clf_kmeans["kappa_cohen"]), 4),
+        "f1_macro": round(float(clf_kmeans["f1_macro"]), 4),
+        "f1_weighted": round(float(clf_kmeans.get("f1_weighted", clf_kmeans["f1_macro"])), 4),
+        "rand_index": round(float(ext_kmeans["rand_index"]), 4),
+        "jaccard": round(float(ext_kmeans["jaccard"]), 4),
+    }
+
+    print(
+        f"  [K-Means Baseline] Pureza: {res['accuracy_pureza']*100:.2f}% | "
+        f"Silueta: {res['silhouette_coseno']:.4f} | "
+        f"Macro F1: {res['f1_macro']:.4f} | "
+        f"Weighted F1: {res['f1_weighted']:.4f} | "
+        f"Rand: {res['rand_index']:.4f} | "
+        f"Tiempo: {t_kmeans:.4f}s"
+    )
+    return res
+
+
 def ejecutar_todos_los_experimentos():
     """
     Ejecuta el protocolo experimental completo para alimentar el informe científico-técnico
@@ -439,7 +518,7 @@ def ejecutar_todos_los_experimentos():
     """
     print("\n" + "=" * 70)
     print(" EJECUTANDO BANCO DE PRUEBAS EXPERIMENTAL COMPLETO")
-    print(" (Evidencias de Dimensión, Normalización, TF-IDF, Random e Interacción D x K)")
+    print(" (Evidencias de Dimensión, Normalización, TF-IDF, Random, Interacción D x K y Baseline K-Means)")
     print("=" * 70)
 
     from src.config import EMBEDDINGS_FILE, LABELS_FILE, POSTS_TEXT_FILE, METRICS_PROFILING_FILE
@@ -452,7 +531,7 @@ def ejecutar_todos_los_experimentos():
     with open(str(POSTS_TEXT_FILE), "r", encoding="utf-8") as f:
         textos = json.load(f)
 
-    # 1. Dimensión del espacio PCA vs Original
+    # 1. Dimensión del espacio PCA vs Original (con búsqueda dinámica k*(D))
     res_dim = experimento_impacto_dimensionalidad(X, y_true, k_optimo=15)
 
     # 2. Normalización L2
@@ -467,6 +546,9 @@ def ejecutar_todos_los_experimentos():
     # 5. Interacción entre variables (D x K)
     res_interaccion = experimento_interaccion_dimension_k(X, y_true)
 
+    # 6. Baseline Externo (K-Means de Scikit-Learn)
+    res_kmeans = experimento_baseline_kmeans_externo(X, y_true, k_optimo=15)
+
     # Guardar evidencias en JSON para el informe
     informe_evidencias = {
         "impacto_dimension_pca": res_dim,
@@ -474,6 +556,7 @@ def ejecutar_todos_los_experimentos():
         "comparativa_tfidf_vs_sbert": res_tfidf,
         "referencia_random": res_random,
         "interaccion_dimension_k": res_interaccion,
+        "baseline_kmeans_externo": res_kmeans,
     }
 
     ruta_json = os.path.join(str(PROCESSED_DATA_DIR), "evidencias_experimentales.json")

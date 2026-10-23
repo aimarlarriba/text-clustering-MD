@@ -19,8 +19,20 @@ Uso:
 import os
 import sys
 import time
+import warnings
 import argparse
 from pathlib import Path
+
+# Silenciar advertencias informativas no críticas de Hugging Face Hub
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+warnings.filterwarnings("ignore", message=".*unauthenticated requests to the HF Hub.*")
+warnings.filterwarnings("ignore", message=".*You are sending unauthenticated requests.*")
+try:
+    from huggingface_hub.utils import logging as hf_logging
+    hf_logging.set_verbosity_error()
+except Exception:
+    pass
 
 # Añadir la raíz del proyecto al sys.path para importaciones estándar
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -143,14 +155,15 @@ def ejecutar_paso_evaluacion():
         print(f"  - Fowlkes-Mallows Index:                         {resultados['fowlkes_mallows']:.4f}")
         print(f"  - Holdout Train Pureza:                          {resultados['holdout']['train']['accuracy_pureza'] * 100:.2f}%")
         print(f"  - Holdout Test Pureza (no vistos):               {resultados['holdout']['test']['accuracy_pureza'] * 100:.2f}% (std 5-rep: {resultados['holdout']['test']['accuracy_std_5rep'] * 100:.2f}%)")
+        print(f"  - Holdout Test Weighted F1 (w.Avg):              {resultados['holdout']['test']['f1_weighted']:.4f}")
         print(f"  - Holdout Train Rand:                            {resultados['holdout']['train']['rand']:.4f}")
         print(f"  - Holdout Test Rand (no vistos):                 {resultados['holdout']['test']['rand']:.4f}")
-        print(f"\n[OK] 9 Figuras científicas disponibles en '{REPORTS_DIR}'.")
+        print(f"\n[OK] 10 Figuras científicas disponibles en '{REPORTS_DIR}' (incluyendo el Heat-Map Fig 10).")
     return resultados is not None
 
 
 def ejecutar_paso_experimentos():
-    """Fase 4: Ejecuta los experimentos científicos (Dimensión, Normalización, TF-IDF y Random)."""
+    """Fase 4: Ejecuta los experimentos científicos (Dimensión, Normalización, TF-IDF, Random y K-Means)."""
     print("\n" + "=" * 70)
     print(" [FASE 4] EVIDENCIAS EXPERIMENTALES (DIMENSIÓN, PREPROCESO Y BASELINES)")
     print("=" * 70)
@@ -204,9 +217,47 @@ def main():
         dest="toy",
         help="Ejecuta la demostración didáctica de algoritmos scratch sobre datos sintéticos (toy-example)",
     )
+    parser.add_argument(
+        "--infer",
+        "--texto",
+        type=str,
+        default=None,
+        dest="infer",
+        help="Asigna un nuevo texto clínico a su cluster correspondiente y muestra los vecinos más cercanos dentro de él",
+    )
 
     args = parser.parse_args()
     t_global = time.time()
+
+    if args.infer:
+        print("\n" + "=" * 70)
+        print(" [INFERENCIA INTERACTIVA DE NUEVA INSTANCIA]")
+        print("=" * 70)
+        import json
+        import numpy as np
+        from src.evaluacion import inferir_y_mostrar_cercanos
+        from src.clustering.hierarchical import MotorJerarquico
+        from src.metricas_internas import cortar_dendrograma_scratch
+
+        emb_path = PROCESSED_DATA_DIR / "embeddings_sbert.npy"
+        dist_path = PROCESSED_DATA_DIR / "matriz_distancias_cosine.npy"
+        text_path = PROCESSED_DATA_DIR / "textos_posts.json"
+
+        if not emb_path.exists() or not dist_path.exists() or not text_path.exists():
+            print("[ERROR] Artefactos procesados no encontrados. Ejecuta 'python main.py' primero.")
+            sys.exit(1)
+
+        X = np.load(str(emb_path))
+        D = np.load(str(dist_path))
+        with open(str(text_path), "r", encoding="utf-8") as f:
+            textos = json.load(f)
+
+        Z = MotorJerarquico(tipo_enlace="complete").fit(D)
+        etiquetas = cortar_dendrograma_scratch(Z, n_clusters=15)
+
+        print(f"Texto a inferir: \"{args.infer}\"")
+        inferir_y_mostrar_cercanos(args.infer, X, etiquetas, textos, k=3, metrica="cosine")
+        sys.exit(0)
 
     if args.toy or args.step == "toy":
         exito = ejecutar_toy()

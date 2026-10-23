@@ -178,18 +178,39 @@ python main.py
   ```
 
 ### Opción 3: Ejecución Modular por Fases
-- **Solo Fase 1 (Embeddings y Matrices de Distancia Scratch)**:
+- **Solo Fase 1 (Embeddings y Matrices de Distancia Scratch con Profiling)**:
   ```bash
   python main.py --step embeddings --n_muestras 500
   ```
-- **Solo Fase 2 y 3 (Clustering, Validación y Figuras)**:
+- **Solo Fase 2 y 3 (Clustering, Validación, Holdout y Figuras)**:
   ```bash
   python main.py --step evaluacion
+  ```
+- **Fase de Experimentos (Dimensionalidad, Representaciones y Baseline KMeans)**:
+  ```bash
+  python main.py --step experimentos
+  ```
+- **Inferencia Interactiva sobre Texto Libre (1-NN Intra-Cluster)**:
+  ```bash
+  python main.py --infer "I feel completely exhausted and want to give up everything"
   ```
 - **Ajustar el número de muestras**:
   ```bash
   python main.py --n_muestras 200
   ```
+
+---
+
+## 👥 Distribución de Responsabilidades por Paquetes de Software
+
+En cumplimiento con los estándares de ingeniería de software y la rúbrica docente de evaluación por paquetes:
+
+| Miembro del Equipo | Módulos / Ficheros Asignados | Responsabilidad Técnica Principal |
+|---|---|---|
+| **Aimar Larriba** | `main.py`, `src/embeddings.py`, `src/experimentos.py`, `src/config.py` | Orquestación CLI completa, inferencia `--infer`, generación y normalización L2 de embeddings densos SBERT, matrices vectorizadas Scratch de proximidad (Coseno y Euclídea), análisis empírico de contraste de Aggarwal, profiling computacional $O(N^2)$ (distancias y Lance-Williams), experimentos multidimensionales y baseline comparativo con K-Means externo de Scikit-Learn. |
+| **Adrián Ramírez** | `src/metricas_internas.py`, `src/clustering/lance_williams.py` | Coeficientes y fórmulas recursivas de Lance-Williams (Single, Complete, Average), métricas intrínsecas Scratch (CPCC, Cohesión SSE, Separación BSS, Silueta media y perfil individual, índice de Dunn), optimización no supervisada de $K$ (búsqueda de picos locales). |
+| **Urko Horas** | `src/clustering/hierarchical.py`, `src/clustering/__init__.py`, `toy_example.py` | Motor aglomerativo SAHN iterativo Scratch, serialización de matriz de enlace *linkage* (formato SciPy), corte horizontal del dendrograma y demostración didáctica autocontenida paso a paso (*Toy Example*). |
+| **María Fernández** | `src/evaluacion.py`, `src/pipeline.py` | Validación externa Scratch frente a ontología clínica C-SSRS (Rand, Jaccard, Fowlkes-Mallows, Purity, Cohen's Kappa, Macro-F1 y Weighted F1), protocolo Holdout (Train 80% / Test 20%) sin fuga de etiquetas, matriz de confusión Heatmap dual Train-Test, perfilado semántico (Codebook 6x3 con c-TF-IDF y oraciones prototipo) y recuperación semántica 1-NN intra-cluster. |
 
 ---
 
@@ -208,6 +229,7 @@ Todas las figuras generadas se almacenan automáticamente en alta resolución en
 | **Fig. 7** | `fig7_tabla_codebook_6x3_ventanas.png` | **Codebook Semántico**: Tabla formal con 6 ventanas de 3 palabras (trigramas c-TF-IDF) y la oración prototipo de cada centroide. |
 | **Fig. 8** | `fig8_correlacion_externa_k.png` | Curvas de validación externa (Rand, Jaccard, Fowlkes-Mallows, Purity, Cohen's Kappa, Macro-F1) en función de $K$. |
 | **Fig. 9** | `fig9_evidencias_dimension_y_normalizacion.png` | **Evidencias Experimentales**: Curva de calidad vs dimensión ($D \in [2..384]$), comparativa TF-IDF vs SBERT, y efecto de normalización en el contraste. |
+| **Fig. 10** | `fig10_matriz_confusion_heatmap.png` | **Matriz de Confusión Heatmap (Train vs Test)**: Comparativa dual en Train ($N_1=400$) y Test ($N_2=100$) evaluando generalización sin fuga de información (recuento absoluto y porcentaje normalizado por fila). |
 | **Extra** | `comparativa_distancias.png` | Histograma de contraste relativo y correlación entre Distancia Coseno y Euclídea (Aggarwal et al., 2001). |
 
 ---

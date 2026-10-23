@@ -112,7 +112,7 @@ def ejecutar_toy_example():
     print(f"  - Macro F1-Score:        {clf['f1_macro']:.4f}")
 
     # -------------------------------------------------------------------------
-    # 5. ASIGNACIÓN DE NUEVA MUESTRA NO VISTA
+    # 5. ASIGNACIÓN DE NUEVA MUESTRA NO VISTA E INFERENCIA INTRA-CLUSTER
     # -------------------------------------------------------------------------
     print("\n--- 5. Asignación de una Instancia no Vista ---")
     punto_nuevo = np.array([4.9, 5.1])
@@ -120,8 +120,18 @@ def ejecutar_toy_example():
     vecino_cercano = int(np.argmin(dists_nuevo))
     cluster_asignado = pred_k3[vecino_cercano]
     print(f"  Punto de test: {punto_nuevo}")
-    print(f"  Vecino más cercano en train: Instancia {vecino_cercano} a distancia euclídea {dists_nuevo[vecino_cercano]:.4f}")
-    print(f"  Cluster asignado: C{cluster_asignado} (Inferencia por 1-NN)")
+    print(f"  Vecino más cercano en train (1-NN global): Instancia #{vecino_cercano} a dist: {dists_nuevo[vecino_cercano]:.4f}")
+    print(f"  Cluster asignado: C{cluster_asignado}")
+
+    # Restringir la recuperación de instancias exclusivamente al cluster asignado
+    indices_en_cluster = np.where(pred_k3 == cluster_asignado)[0]
+    dists_intra = dists_nuevo[indices_en_cluster]
+    orden_intra = np.argsort(dists_intra)
+
+    print(f"  Instancias más cercanas DENTRO DEL CLUSTER C{cluster_asignado} (total en cluster: {len(indices_en_cluster)}):")
+    for pos, idx_rel in enumerate(orden_intra[:3], 1):
+        idx_global = indices_en_cluster[idx_rel]
+        print(f"    {pos}. Instancia #{idx_global} (Coords: {X_toy[idx_global]}, Dist: {dists_intra[idx_rel]:.4f})")
 
     print("\n" + "=" * 70)
     print(" [OK] Demostración de toy-example ejecutada con éxito.")
