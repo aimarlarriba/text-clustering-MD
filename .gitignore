@@ -6,6 +6,7 @@ data/
 data_processed/
 downloads/
 raw_data/
+
 *.csv
 *.tsv
 *.xlsx
@@ -17,6 +18,8 @@ raw_data/
 # ==============================================================================
 # MODELOS Y ARTEFACTOS SERIALIZADOS PESADOS
 # ==============================================================================
+*.npy
+*.npz
 *.pkl
 *.pickle
 *.joblib
@@ -45,6 +48,7 @@ __pycache__/
 *.so
 .pytest_cache/
 .coverage
+htmlcov/
 
 # ==============================================================================
 # IDEs Y SISTEMA OPERATIVO
@@ -53,3 +57,4 @@ __pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
+*.log

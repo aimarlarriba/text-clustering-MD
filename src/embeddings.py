@@ -1,6 +1,18 @@
 import os
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
+
+# Silenciar advertencias informativas no críticas de Hugging Face Hub
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+warnings.filterwarnings("ignore", message=".*unauthenticated requests to the HF Hub.*")
+warnings.filterwarnings("ignore", message=".*You are sending unauthenticated requests.*")
+try:
+    from huggingface_hub.utils import logging as hf_logging
+    hf_logging.set_verbosity_error()
+except Exception:
+    pass
 
 
 # --- Embeddings con SBERT ---
@@ -13,19 +25,40 @@ def generar_embeddings(textos, nombre_modelo="all-MiniLM-L6-v2", normalizar=True
         - textos: lista o array con textos (strings).
         - nombre_modelo: identificador del modelo de sentence-transformers.
         - normalizar: si es True, normaliza los vectores a norma unitaria (L2 = 1.0).
+          Si es False, extrae la salida directa de la capa de Pooling antes de la
+          normalización L2 para permitir contrastes empíricos formales.
 
     Post-condiciones:
         - Devuelve una matriz de numpy de dimensiones (N, 384) en float32.
     """
     from sentence_transformers import SentenceTransformer
+    import torch
+
     modelo = SentenceTransformer(nombre_modelo)
     textos_limpios = [str(t) if t is not None else "" for t in textos]
-    vectores = modelo.encode(
-        textos_limpios,
-        normalize_embeddings=normalizar,
-        show_progress_bar=True
-    )
-    return np.asarray(vectores, dtype=np.float32)
+
+    if not normalizar:
+        # Bypassear la capa Normalize para obtener vectores crudos con magnitudes reales
+        batch_size = 64
+        vectores_lista = []
+        for i in range(0, len(textos_limpios), batch_size):
+            lote = textos_limpios[i:i + batch_size]
+            features = modelo.preprocess(lote) if hasattr(modelo, "preprocess") else modelo.tokenize(lote)
+            for k, v in features.items():
+                if isinstance(v, torch.Tensor):
+                    features[k] = v.to(modelo.device)
+            with torch.no_grad():
+                out = modelo[0](features)
+                emb = modelo[1](out)["sentence_embedding"].cpu().numpy()
+            vectores_lista.append(emb)
+        return np.vstack(vectores_lista).astype(np.float32)
+    else:
+        vectores = modelo.encode(
+            textos_limpios,
+            normalize_embeddings=True,
+            show_progress_bar=True
+        )
+        return np.asarray(vectores, dtype=np.float32)
 
 
 def guardar_embeddings(X: np.ndarray, ruta_archivo: str) -> None:
@@ -301,8 +334,9 @@ def comparar_espacios_metricos(
 def perfilar_coste_computacional(X: np.ndarray, lista_n=(100, 200, 300, 400, 500)) -> list:
     """
     Aporta evidencias cuantitativas del coste computacional (tiempo en segundos
-    y memoria en MB) al calcular las matrices de distancia NxN para demostrar
-    empíricamente la complejidad O(N^2 * D).
+    y memoria en MB) al calcular tanto las matrices de distancia NxN como el motor
+    jerárquico aglomerativo (Lance-Williams) para demostrar empíricamente la
+    complejidad O(N^2 * D) en distancias y O(N^2) en fusiones jerárquicas.
 
     Pre-condiciones:
         - X: matriz (N, D) con N >= max(lista_n).
@@ -312,6 +346,14 @@ def perfilar_coste_computacional(X: np.ndarray, lista_n=(100, 200, 300, 400, 500
         - Devuelve una lista de diccionarios con el profiling de tiempo y memoria.
     """
     import time
+    try:
+        from src.clustering.hierarchical import MotorJerarquico
+    except (ImportError, ModuleNotFoundError):
+        try:
+            from clustering.hierarchical import MotorJerarquico
+        except (ImportError, ModuleNotFoundError):
+            from .clustering.hierarchical import MotorJerarquico
+
     resultados = []
     N_total, D = X.shape
 
@@ -320,17 +362,23 @@ def perfilar_coste_computacional(X: np.ndarray, lista_n=(100, 200, 300, 400, 500
             continue
         sub_X = X[:n]
 
-        # Tiempo Coseno
+        # 1. Tiempo Coseno
         t0 = time.perf_counter()
-        _ = calcular_matriz_distancias_scratch(sub_X, metrica="cosine")
+        D_cos_sub = calcular_matriz_distancias_scratch(sub_X, metrica="cosine")
         t_cos = time.perf_counter() - t0
 
-        # Tiempo Euclídea
+        # 2. Tiempo Euclídea
         t0 = time.perf_counter()
         _ = calcular_matriz_distancias_scratch(sub_X, metrica="euclidean")
         t_euc = time.perf_counter() - t0
 
-        # Memoria teórica de la matriz (float32 = 4 bytes)
+        # 3. Tiempo de Clustering Jerárquico Aglomerativo (Lance-Williams Scratch)
+        t0 = time.perf_counter()
+        motor = MotorJerarquico(tipo_enlace="complete")
+        _ = motor.fit(D_cos_sub)
+        t_clustering = time.perf_counter() - t0
+
+        # 4. Memoria teórica de la matriz (float32 = 4 bytes)
         memoria_mb = (n * n * 4) / (1024 * 1024)
 
         resultados.append({
@@ -338,6 +386,8 @@ def perfilar_coste_computacional(X: np.ndarray, lista_n=(100, 200, 300, 400, 500
             "Dimension_D": D,
             "Tiempo_Coseno_seg": round(t_cos, 5),
             "Tiempo_Euclidea_seg": round(t_euc, 5),
+            "Tiempo_Clustering_Jerarquico_seg": round(t_clustering, 4),
+            "Tiempo_Total_Pipeline_seg": round(t_cos + t_clustering, 4),
             "Memoria_Matriz_MB": round(memoria_mb, 4)
         })
 

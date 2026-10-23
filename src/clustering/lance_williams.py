@@ -98,3 +98,19 @@ def actualizar_matriz_lance_williams(matriz_distancias, cluster1, cluster2, tipo
 
     # Actualizar el tamaño acumulado del nuevo cluster en la posición cluster1
     tamanos_clusters[cluster1] = n_i + n_j
+
+
+if __name__ == "__main__":
+    print("=== Toy-Example: Actualización Recursiva de Lance-Williams ===")
+    # Matriz de distancias de juguete entre 3 puntos: A(0), B(1), C(2)
+    # A y B están a distancia 2.0; C está a 6.0 de A y a 8.0 de B
+    for enlace in ["single", "complete", "average"]:
+        D_toy = np.array([
+            [np.inf, 2.0, 6.0],
+            [2.0, np.inf, 8.0],
+            [6.0, 8.0, np.inf]
+        ], dtype=float)
+        # Supongamos que el cluster 0 tiene tamaño 3 y el cluster 1 tiene tamaño 1
+        tamanos = {0: 3, 1: 1, 2: 1}
+        actualizar_matriz_lance_williams(D_toy, cluster1=0, cluster2=1, tipo_enlace=enlace, tamanos_clusters=tamanos)
+        print(f"Enlace '{enlace:8s}' -> d(C0 U C1, C2) = {D_toy[0, 2]:.4f} | Nuevo tamaño C0: {tamanos[0]}")

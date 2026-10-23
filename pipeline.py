@@ -7,12 +7,39 @@ Descripción:
 """
 
 import os
+import sys
 import time
 import json
 import argparse
 from typing import Tuple, List, Any
 import numpy as np
 import pandas as pd
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+try:
+    from src.config import (
+        RAW_DATA_FILE,
+        PROCESSED_DATA_DIR,
+        DEFAULT_MODEL_NAME,
+        DEFAULT_N_SAMPLES,
+        CLASS_MAP,
+    )
+except (ImportError, ModuleNotFoundError):
+    RAW_DATA_FILE = "data/500_Reddit_users_posts_labels.csv"
+    PROCESSED_DATA_DIR = "data_processed"
+    DEFAULT_MODEL_NAME = "all-MiniLM-L6-v2"
+    DEFAULT_N_SAMPLES = 500
+    CLASS_MAP = {
+        "indicator": 0,
+        "ideation": 1,
+        "behavior": 2,
+        "attempt": 3,
+        "supportive": 4,
+    }
 
 from src.embeddings import (
     generar_embeddings,
@@ -22,6 +49,7 @@ from src.embeddings import (
     comparar_espacios_metricos,
     perfilar_coste_computacional,
 )
+
 
 
 def limpiar_texto_post(post_raw: Any) -> str:
