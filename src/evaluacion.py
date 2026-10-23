@@ -1,18 +1,36 @@
 import os
 import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import json
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 #from scipy.cluster.hierarchy import fcluster
-from metricas_internas import (
-    calcular_cpcc_scratch,
-    calcular_silhouette_scratch,
-    calcular_sse_bss_scratch,
-    calcular_dunn_scratch,
-    cortar_dendrograma_scratch,
-    generar_graficas_validacion_interna,
-)
+try:
+    from src.metricas_internas import (
+        calcular_cpcc_scratch,
+        calcular_silhouette_scratch,
+        calcular_sse_bss_scratch,
+        calcular_dunn_scratch,
+        cortar_dendrograma_scratch,
+        generar_graficas_validacion_interna,
+        optimizar_hiperparametros_internos,
+    )
+except (ImportError, ModuleNotFoundError):
+    from metricas_internas import (
+        calcular_cpcc_scratch,
+        calcular_silhouette_scratch,
+        calcular_sse_bss_scratch,
+        calcular_dunn_scratch,
+        cortar_dendrograma_scratch,
+        generar_graficas_validacion_interna,
+        optimizar_hiperparametros_internos,
+    )
+
 
 def calcular_metricas_externas(labels_true, labels_pred):
     """
@@ -153,7 +171,14 @@ def extraer_y_visualizar_centroides_textuales_scratch(
     """
     import re
     import textwrap
-    from src.clustering.hierarchical import MotorJerarquico
+    try:
+        from src.clustering.hierarchical import MotorJerarquico
+    except (ImportError, ModuleNotFoundError):
+        try:
+            from clustering.hierarchical import MotorJerarquico
+        except (ImportError, ModuleNotFoundError):
+            from .clustering.hierarchical import MotorJerarquico
+
 
     os.makedirs(carpeta_salida, exist_ok=True)
     nombres_clases = {0: "Indicator", 1: "Ideation", 2: "Behavior", 3: "Attempt", 4: "Supportive"}
@@ -627,12 +652,21 @@ def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_e
     return cluster_asignado
 
 
-if __name__ == "__main__":
+def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
+    """
+    Ejecuta el protocolo completo de evaluación interna, externa, Holdout e inferencia.
+    Genera las 8 figuras científicas del informe.
+    """
     print("Iniciando evaluación...")
 
     carpeta_raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    carpeta_datos = os.path.join(carpeta_raiz, "data_processed")
-    sys.path.append(carpeta_raiz)
+    if carpeta_datos is None:
+        carpeta_datos = os.path.join(carpeta_raiz, "data_processed")
+    if carpeta_salida is None:
+        carpeta_salida = os.path.join(carpeta_datos, "graficas_informe")
+
+    if carpeta_raiz not in sys.path:
+        sys.path.append(carpeta_raiz)
 
     # 1. Cargar los datos procesados
     try:
@@ -643,11 +677,17 @@ if __name__ == "__main__":
         with open(os.path.join(carpeta_datos, "textos_posts.json"), "r", encoding="utf-8") as f:
             textos_reales = json.load(f)
     except FileNotFoundError:
-        print("Error: No se encuentran los datos. Ejecuta pipeline.py primero.")
-        exit()
+        print(f"Error: No se encuentran los datos procesados en '{carpeta_datos}'. Ejecuta pipeline.py primero.")
+        return None
 
     # 2. Generar el clustering
-    from src.clustering.hierarchical import MotorJerarquico
+    try:
+        from src.clustering.hierarchical import MotorJerarquico
+    except (ImportError, ModuleNotFoundError):
+        try:
+            from clustering.hierarchical import MotorJerarquico
+        except (ImportError, ModuleNotFoundError):
+            from .clustering.hierarchical import MotorJerarquico
 
     motor = MotorJerarquico(tipo_enlace="average")
     matriz_linkage = motor.fit(matriz_distancias)
@@ -690,23 +730,24 @@ if __name__ == "__main__":
         vectores_densos,
         matriz_distancias,
         np.load(os.path.join(carpeta_datos, "matriz_distancias_euclidean.npy")),
+        carpeta_salida=carpeta_salida,
     )
 
     # Selección no supervisada de K en [2, sqrt(N)=22] (sin prefijar K=5 a dedo)
-    from src.metricas_internas import optimizar_hiperparametros_internos
     opt_info = optimizar_hiperparametros_internos(matriz_distancias)
     k_pico_equilibrado = opt_info["mejor_particion_equilibrada"]["k_optimo"] or 7
-    print(f"\n[OPTIMIZACIÓN NO SUPERVISADA k ∈ [2, √N=22]]")
-    print(f"  - Máximo Global Silhouette: Enlace='{opt_info['mejor_global']['enlace']}', k̂={opt_info['mejor_global']['k_optimo']} (S̄={opt_info['mejor_global']['silhouette']:.4f})")
-    print(f"  - Mejor Partición Equilibrada (sin macro-cluster >80%): Enlace='{opt_info['mejor_particion_equilibrada']['enlace']}', k̂={k_pico_equilibrado} (S̄={opt_info['mejor_particion_equilibrada']['silhouette']:.4f})")
+    print(f"\n[OPTIMIZACION NO SUPERVISADA k en [2, sqrt(N)=22]]")
+    print(f"  - Maximo Global Silhouette: Enlace='{opt_info['mejor_global']['enlace']}', k_opt={opt_info['mejor_global']['k_optimo']} (S_media={opt_info['mejor_global']['silhouette']:.4f})")
+    print(f"  - Mejor Particion Equilibrada (sin macro-cluster >80%): Enlace='{opt_info['mejor_particion_equilibrada']['enlace']}', k_opt={k_pico_equilibrado} (S_media={opt_info['mejor_particion_equilibrada']['silhouette']:.4f})")
     print(f"  - Picos locales detectados (Complete-Link): {opt_info['resultados_por_enlace']['complete']['picos_locales_silhouette']}")
 
-    # Evaluar métricas externas de clasificación (Accuracy/Pureza, Kappa, F1 y Matriz de Confusión) en k̂ descubierto
+    # Evaluar métricas externas de clasificación (Accuracy/Pureza, Kappa, F1 y Matriz de Confusión) en k_opt descubierto
     Z_comp = MotorJerarquico(tipo_enlace="complete").fit(matriz_distancias)
     pred_opt = cortar_arbol(Z_comp, n_clusters=k_pico_equilibrado)
     clf_stats = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales, pred_opt)
     pares_stats = calcular_metricas_externas(etiquetas_reales, pred_opt)
-    print(f"\n--- CORRELACIÓN CON LA REALIDAD EN k̂={k_pico_equilibrado} (COMPLETE-LINK) ---")
+    print(f"\n--- CORRELACION CON LA REALIDAD EN k_opt={k_pico_equilibrado} (COMPLETE-LINK) ---")
+
     print(f"Accuracy / Pureza (Voto Mayoritario): {clf_stats['accuracy_pureza']:.4f}")
     print(f"Estadístico Kappa de Cohen:           {clf_stats['kappa_cohen']:.4f}")
     print(f"F1-Measure (Macro):                   {clf_stats['f1_macro']:.4f}")
@@ -716,7 +757,12 @@ if __name__ == "__main__":
 
     # Extraer y dibujar el Codebook de Centroides Textuales + Curva de Correlación Externa (Figura 4)
     extraer_y_visualizar_centroides_textuales_scratch(
-        vectores_densos, matriz_distancias, etiquetas_reales, textos_reales, k_representar=k_pico_equilibrado
+        vectores_densos,
+        matriz_distancias,
+        etiquetas_reales,
+        textos_reales,
+        k_representar=k_pico_equilibrado,
+        carpeta_salida=carpeta_salida,
     )
 
     # Evaluación Honesta Holdout (N1-Train = 400, N2-Test = 100 no vistos en el clustering)
@@ -745,3 +791,23 @@ if __name__ == "__main__":
 
     # Inferencia honesta: pasamos la primera instancia de TEST (no vista en X_train)
     inferir_y_mostrar_cercanos(X_test[0], X_train, pred_train, textos_reales[:n_train], k=3)
+
+    return {
+        "cpcc": float(cpcc),
+        "silhouette_k_opt": float(opt_info["mejor_global"]["silhouette"]),
+        "k_optimo": int(k_pico_equilibrado),
+        "accuracy_pureza": float(clf_stats["accuracy_pureza"]),
+        "kappa_cohen": float(clf_stats["kappa_cohen"]),
+        "f1_macro": float(clf_stats["f1_macro"]),
+        "rand_index": float(pares_stats["rand_index"]),
+        "jaccard": float(pares_stats["jaccard"]),
+        "fowlkes_mallows": float(pares_stats["fowlkes_mallows"]),
+        "holdout": {
+            "train": {"silhouette": float(sil_train), "rand": float(ext_train["rand_index"])},
+            "test": {"silhouette": float(sil_test), "rand": float(ext_test["rand_index"])},
+        },
+    }
+
+
+if __name__ == "__main__":
+    ejecutar_evaluacion()

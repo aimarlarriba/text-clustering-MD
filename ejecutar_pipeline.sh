@@ -1,4 +1,16 @@
-python3 pipeline.py
-python3 -m src.clustering.lance_williams
-python3 -m src.metricas_internas
-python3 src/evaluacion.py
+#!/usr/bin/env bash
+# ==============================================================================
+# Script de ejecución de pipeline para Linux / macOS / Bash
+# ==============================================================================
+set -e
+
+echo "======================================================================"
+echo " text-clustering-MD: Ejecutor de Pipeline Bash"
+echo "======================================================================"
+
+PYTHON_CMD="python3"
+if ! command -v python3 &> /dev/null; then
+    PYTHON_CMD="python"
+fi
+
+$PYTHON_CMD main.py "$@"

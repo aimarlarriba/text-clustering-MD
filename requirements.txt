@@ -1,6 +1,19 @@
-numpy
-pandas
-scipy
-scikit-learn
-matplotlib
-sentence-transformers
+# ==============================================================================
+# Dependencias Principales - text-clustering-MD
+# ==============================================================================
+
+# Computación Numérica y Manipulación de Datos
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+scikit-learn>=1.2.0
+
+# Procesamiento de Lenguaje Natural y Representaciones Densas
+sentence-transformers>=2.2.2
+torch>=2.0.0
+
+# Visualización Científica y Gráficas del Informe
+matplotlib>=3.7.0
+
+# Calidad de Código y Testing (Opcional)
+pytest>=7.3.0

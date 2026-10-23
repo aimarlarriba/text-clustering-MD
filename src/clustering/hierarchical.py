@@ -1,6 +1,13 @@
 import numpy as np
 import time
-from src.clustering.lance_williams import actualizar_matriz_lance_williams
+try:
+    from src.clustering.lance_williams import actualizar_matriz_lance_williams
+except (ImportError, ModuleNotFoundError):
+    try:
+        from .lance_williams import actualizar_matriz_lance_williams
+    except (ImportError, ModuleNotFoundError):
+        from clustering.lance_williams import actualizar_matriz_lance_williams
+
 
 class MotorJerarquico:
     """

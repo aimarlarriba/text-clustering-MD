@@ -853,7 +853,14 @@ def generar_graficas_validacion_interna(
 
 if __name__ == "__main__":
     print("=== Toy-Example: Validación Interna Scratch (CPCC y Silhouette) ===")
-    from src.clustering.hierarchical import MotorJerarquico
+    try:
+        from src.clustering.hierarchical import MotorJerarquico
+    except (ImportError, ModuleNotFoundError):
+        try:
+            from clustering.hierarchical import MotorJerarquico
+        except (ImportError, ModuleNotFoundError):
+            from .clustering.hierarchical import MotorJerarquico
+
 
     # Datos sintéticos con 3 grupos bien diferenciados (15 puntos en total)
     np.random.seed(42)
