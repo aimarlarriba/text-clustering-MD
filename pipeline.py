@@ -125,7 +125,14 @@ def cargar_datos(ruta_csv: str = "data/500_Reddit_users_posts_labels.csv", n_mue
         etiquetas_str = df_sub[col_label].astype(str).str.strip().str.lower()
         etiquetas = np.array([mapa_clases.get(lbl, 0) for lbl in etiquetas_str], dtype=int)
         distribucion = df_sub[col_label].value_counts().to_dict()
+
+        duplicados = df_sub.duplicated(subset=[col_texto]).sum()
+        missing = df_sub[col_texto].isna().sum()
+        palabras_unicas = len(set(" ".join(textos).lower().split()))
+
         print(f"Posts cargados: {len(textos)} | Distribución de clases: {distribucion}")
+        print(
+            f"Duplicados detectados: {duplicados} | Missing values: {missing} | Talla vocabulario (aprox): {palabras_unicas}")
     else:
         etiquetas = np.zeros(len(textos), dtype=int)
 
@@ -155,12 +162,17 @@ def main():
 
         try:
             X_train = np.load(os.path.join(args.salida, "embeddings_sbert.npy"))
-            y_train = np.load(os.path.join(args.salida, "etiquetas_reales.npy"))
+            # Corrección de fuga: se cargan los clústeres inferidos, no el ground truth clínico
+            y_train = np.load(os.path.join(args.salida, "etiquetas_predichas.npy"))
             with open(os.path.join(args.salida, "textos_posts.json"), "r", encoding="utf-8") as f:
                 textos_train = json.load(f)
         except FileNotFoundError:
-            print("Error: Datos base no encontrados. Ejecuta primero el pipeline completo.")
+            print("Error: Datos base o clústeres no encontrados. Ejecuta pipeline.py y evaluacion.py primero.")
             return
+
+        vector_nuevo = generar_embeddings([texto_evaluar], nombre_modelo=args.modelo, normalizar=True)[0]
+        inferir_y_mostrar_cercanos(vector_nuevo, X_train, y_train, textos_train, k=3)
+        return
 
         vector_nuevo = generar_embeddings([texto_evaluar], nombre_modelo=args.modelo, normalizar=True)[0]
         inferir_y_mostrar_cercanos(vector_nuevo, X_train, y_train, textos_train, k=3)

@@ -4,20 +4,9 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
-from scipy.cluster.hierarchy import fcluster
 
 
 def calcular_metricas_externas(labels_true, labels_pred):
-    """
-    Calcula las métricas de validación externa evaluando los pares de instancias.
-
-    Pre-condiciones:
-    - labels_true y labels_pred: arrays 1D de NumPy o listas de igual longitud (N,).
-
-    Post-condiciones:
-    - Devuelve un diccionario con Rand Index, Jaccard y Fowlkes-Mallows.
-    - Todos los valores numéricos devueltos son floats acotados en [0.0, 1.0].
-    """
     labels_true = np.asarray(labels_true).flatten()
     labels_pred = np.asarray(labels_pred).flatten()
     assert len(labels_true) == len(labels_pred), "Las dimensiones de las etiquetas no coinciden"
@@ -47,17 +36,6 @@ def calcular_metricas_externas(labels_true, labels_pred):
 
 
 def calcular_metricas_clasificacion_clustering_scratch(y_true, pred_clusters, mapeo_entrenamiento=None):
-    """
-    Asigna clases reales a los clusters y calcula métricas de clasificación ponderadas.
-
-    Pre-condiciones:
-    - y_true y pred_clusters: arrays 1D numéricos de tamaño (N,).
-    - mapeo_entrenamiento: opcional, diccionario con la asignación cluster -> clase.
-
-    Post-condiciones:
-    - Devuelve un diccionario con el mapeo utilizado, la matriz de confusión (2D array) y
-      las métricas ponderadas (accuracy, w_precision, w_recall, w_f1) acotadas en [0.0, 1.0].
-    """
     clases_reales = np.unique(y_true)
 
     if mapeo_entrenamiento is None:
@@ -95,31 +73,26 @@ def calcular_metricas_clasificacion_clustering_scratch(y_true, pred_clusters, ma
     w_precision = sum(
         precisions[c] * soporte[c] for c in clases_reales) / total_instancias if total_instancias > 0 else 0.0
     w_recall = sum(recalls[c] * soporte[c] for c in clases_reales) / total_instancias if total_instancias > 0 else 0.0
-    w_f1 = sum(f1s[c] * soporte[c] for c in clases_reales) / total_instancias if total_instancias > 0 else 0.0
-    accuracy = np.trace(matriz_conf) / total_instancias if total_instancias > 0 else 0.0
+
+    f1_macro = np.mean(list(f1s.values())) if len(f1s) > 0 else 0.0
+    accuracy_pureza = np.trace(matriz_conf) / total_instancias if total_instancias > 0 else 0.0
+
+    p_e = sum((np.sum(matriz_conf[c, :]) * np.sum(matriz_conf[:, c])) for c in clases_reales) / (
+                total_instancias ** 2) if total_instancias > 0 else 0.0
+    kappa_cohen = (accuracy_pureza - p_e) / (1 - p_e) if (1 - p_e) != 0 else 0.0
 
     return {
         "mapeo_cluster_a_clase": mapeo,
         "matriz_confusion": matriz_conf,
-        "accuracy": float(accuracy),
+        "accuracy_pureza": float(accuracy_pureza),
         "w_precision": float(w_precision),
         "w_recall": float(w_recall),
-        "w_f1": float(w_f1)
+        "f1_macro": float(f1_macro),
+        "kappa_cohen": float(kappa_cohen)
     }
 
 
 def guardar_matriz_confusion_heatmap(matriz_conf, ruta_salida="data_processed/graficas_informe/heatmap_confusion.png"):
-    """
-    Exporta la matriz de confusión como un heatmap.
-
-    Pre-condiciones:
-    - matriz_conf: array 2D de NumPy con valores enteros no negativos.
-    - ruta_salida: string indicando un path válido del sistema de archivos.
-
-    Post-condiciones:
-    - Crea los directorios necesarios y guarda una imagen PNG en la ruta_salida.
-    - No devuelve ningún valor (retorna None).
-    """
     os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
     plt.figure(figsize=(8, 6))
     plt.imshow(matriz_conf, interpolation='nearest', cmap=plt.cm.Blues)
@@ -142,30 +115,29 @@ def guardar_matriz_confusion_heatmap(matriz_conf, ruta_salida="data_processed/gr
 
 def cortar_arbol(matriz_linkage, altura_h):
     """
-    Genera los clústeres planos a partir del dendrograma jerárquico.
-
-    Pre-condiciones:
-    - matriz_linkage: matriz de SciPy de tamaño (N-1, 4) generada por el algoritmo de clustering.
-    - altura_h: valor float positivo que determina el umbral de corte.
-
-    Post-condiciones:
-    - Devuelve un array 1D de tamaño (N,) con las etiquetas enteras de clúster asignadas.
+    Implementación scratch para cortar el dendrograma en clústeres planos.
+    Sustituye a scipy.cluster.hierarchy.fcluster.
     """
-    return fcluster(matriz_linkage, t=altura_h, criterion='distance')
+    n_muestras = len(matriz_linkage) + 1
+    clusters_activos = {i: [i] for i in range(n_muestras)}
+
+    for i, fila in enumerate(matriz_linkage):
+        c1, c2, dist, _ = fila
+        if dist > altura_h:
+            break
+        nuevo_id = n_muestras + i
+        clusters_activos[nuevo_id] = clusters_activos.pop(int(c1)) + clusters_activos.pop(int(c2))
+
+    etiquetas = np.zeros(n_muestras, dtype=int)
+    for idx_cluster, (id_nodo, miembros) in enumerate(clusters_activos.items()):
+        for m in miembros:
+            etiquetas[m] = idx_cluster
+    return etiquetas
 
 
-def visualizar_pca_clusters(vectores_densos, etiquetas_predichas):
-    """
-    Reduce la dimensionalidad del espacio vectorial y lo grafica en 2D.
-
-    Pre-condiciones:
-    - vectores_densos: matriz de NumPy de tamaño (N, D).
-    - etiquetas_predichas: array 1D de tamaño (N,) con los IDs de los clústeres.
-
-    Post-condiciones:
-    - Muestra un gráfico de dispersión (scatter plot) por pantalla.
-    - No devuelve ningún valor (retorna None).
-    """
+def visualizar_pca_clusters(vectores_densos, etiquetas_predichas,
+                            ruta_salida="data_processed/graficas_informe/mapa_pca_centroides.png"):
+    os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
     pca = PCA(n_components=2)
     vectores_2d = pca.fit_transform(vectores_densos)
     plt.figure(figsize=(8, 6))
@@ -173,25 +145,12 @@ def visualizar_pca_clusters(vectores_densos, etiquetas_predichas):
                           edgecolor='k')
     plt.title("Proyección PCA de los Clusters")
     plt.colorbar(scatter, label="Cluster ID")
-    plt.show()
+    plt.savefig(ruta_salida, dpi=300)
+    plt.close()
 
 
 def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_entrenamiento, textos_entrenamiento,
                                k=3):
-    """
-    Asigna un nuevo post a un cluster y busca los vecinos más cercanos estrictamente dentro de ese cluster.
-
-    Pre-condiciones:
-    - vector_nuevo: array 1D numérico de dimensionalidad D.
-    - vectores_entrenamiento: matriz de tamaño (N, D).
-    - etiquetas_entrenamiento: array 1D de tamaño N.
-    - textos_entrenamiento: lista de strings de tamaño N.
-    - k: entero positivo indicando el número de vecinos a mostrar.
-
-    Post-condiciones:
-    - Imprime por consola los K textos más cercanos y sus distancias matemáticas.
-    - Devuelve el ID numérico del cluster al que se ha asignado la nueva muestra.
-    """
     distancias_globales = np.linalg.norm(vectores_entrenamiento - vector_nuevo, axis=1)
     cluster_asignado = etiquetas_entrenamiento[np.argmin(distancias_globales)]
 
@@ -208,6 +167,11 @@ def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_e
         print(f"  {i + 1}. [Distancia: {distancias_locales[idx]:.4f}] -> \"{textos_filtrados[idx]}\"")
 
     return cluster_asignado
+
+
+def ejecutar_evaluacion():
+    print("Iniciando evaluación y exportación de métricas...")
+    pass
 
 
 if __name__ == "__main__":
@@ -234,6 +198,8 @@ if __name__ == "__main__":
     altura_h = 0.70
     predicciones = cortar_arbol(matriz_linkage, altura_h)
 
+    np.save(os.path.join(carpeta_datos, "etiquetas_predichas.npy"), predicciones)
+
     print("\n--- RESULTADOS DE VALIDACIÓN EXTERNA (PARES) ---")
     resultados = calcular_metricas_externas(etiquetas_reales, predicciones)
     print(f"Rand Index: {resultados.get('rand_index', 0):.4f}")
@@ -242,13 +208,11 @@ if __name__ == "__main__":
 
     print("\n--- RESULTADOS DE CLASIFICACIÓN (CLASE A CLUSTER) ---")
     clf_stats = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales, predicciones)
-    print(f"Accuracy: {clf_stats['accuracy']:.4f}")
-    print(f"Weighted Precision: {clf_stats['w_precision']:.4f}")
-    print(f"Weighted Recall: {clf_stats['w_recall']:.4f}")
-    print(f"Weighted F1-Score: {clf_stats['w_f1']:.4f}")
+    print(f"Accuracy/Pureza: {clf_stats['accuracy_pureza']:.4f}")
+    print(f"F1-Macro: {clf_stats['f1_macro']:.4f}")
+    print(f"Kappa de Cohen: {clf_stats['kappa_cohen']:.4f}")
 
     guardar_matriz_confusion_heatmap(clf_stats["matriz_confusion"])
     print("-> Matriz de confusión guardada en 'data_processed/graficas_informe/heatmap_confusion.png'")
 
     visualizar_pca_clusters(vectores_densos, predicciones)
-    inferir_y_mostrar_cercanos(vectores_densos[0], vectores_densos, predicciones, textos_reales, k=3)
