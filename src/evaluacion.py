@@ -9,7 +9,6 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
-#from scipy.cluster.hierarchy import fcluster
 try:
     from src.metricas_internas import (
         calcular_cpcc_scratch,
@@ -179,10 +178,12 @@ def calcular_metricas_clasificacion_clustering_scratch(
         prec_weighted = rec_weighted = f1_weighted = 0.0
 
     return {
+        "accuracy": round(accuracy_pureza, 4),
         "accuracy_pureza": round(accuracy_pureza, 4),
         "kappa_cohen": round(float(kappa), 4),
         "f1_macro": round(float(np.mean(f1_por_clase)), 4),
         "f1_weighted": round(f1_weighted, 4),
+        "w_f1": round(f1_weighted, 4),
         "precision_macro": round(float(np.mean(precision_por_clase)), 4),
         "precision_weighted": round(prec_weighted, 4),
         "recall_macro": round(float(np.mean(recall_por_clase)), 4),
