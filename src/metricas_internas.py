@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def calcular_matriz_cofenetica_scratch(matriz_linkage):

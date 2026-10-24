@@ -225,6 +225,19 @@ def main():
         dest="infer",
         help="Asigna un nuevo texto clínico a su cluster correspondiente y muestra los vecinos más cercanos dentro de él",
     )
+    parser.add_argument(
+        "--k",
+        "-k",
+        type=int,
+        default=15,
+        help="Número de clusters para el corte del dendrograma (por defecto 15, o 5 para clases C-SSRS)",
+    )
+    parser.add_argument(
+        "--top_k",
+        type=int,
+        default=3,
+        help="Número de instancias más cercanas a mostrar dentro del cluster asignado (por defecto 3)",
+    )
 
     args = parser.parse_args()
     t_global = time.time()
@@ -236,6 +249,7 @@ def main():
         import json
         import numpy as np
         from src.evaluacion import inferir_y_mostrar_cercanos
+        from src.embeddings import generar_embeddings
         from src.clustering.hierarchical import MotorJerarquico
         from src.metricas_internas import cortar_dendrograma_scratch
 
@@ -253,10 +267,11 @@ def main():
             textos = json.load(f)
 
         Z = MotorJerarquico(tipo_enlace="complete").fit(D)
-        etiquetas = cortar_dendrograma_scratch(Z, n_clusters=15)
+        etiquetas = cortar_dendrograma_scratch(Z, n_clusters=args.k)
 
-        print(f"Texto a inferir: \"{args.infer}\"")
-        inferir_y_mostrar_cercanos(args.infer, X, etiquetas, textos, k=3, metrica="cosine")
+        print(f"Texto a inferir: \"{args.infer}\" (Corte en K = {args.k} clusters, mostrando Top-{args.top_k} vecinos)")
+        vector_nuevo = generar_embeddings([args.infer], nombre_modelo=args.modelo, normalizar=True)[0]
+        inferir_y_mostrar_cercanos(vector_nuevo, X, etiquetas, textos, k=args.top_k)
         sys.exit(0)
 
     if args.toy or args.step == "toy":

@@ -163,16 +163,23 @@ def main():
         try:
             X_train = np.load(os.path.join(args.salida, "embeddings_sbert.npy"))
             # Corrección de fuga: se cargan los clústeres inferidos, no el ground truth clínico
-            y_train = np.load(os.path.join(args.salida, "etiquetas_predichas.npy"))
+            pred_file = os.path.join(args.salida, "etiquetas_predichas.npy")
+            if os.path.exists(pred_file):
+                y_train = np.load(pred_file)
+            else:
+                dist_file = os.path.join(args.salida, "matriz_distancias_cosine.npy")
+                D_cos = np.load(dist_file)
+                from src.clustering.hierarchical import MotorJerarquico
+                from src.metricas_internas import cortar_dendrograma_scratch
+                Z = MotorJerarquico(tipo_enlace="complete").fit(D_cos)
+                y_train = cortar_dendrograma_scratch(Z, n_clusters=15)
+                np.save(pred_file, y_train)
+
             with open(os.path.join(args.salida, "textos_posts.json"), "r", encoding="utf-8") as f:
                 textos_train = json.load(f)
         except FileNotFoundError:
-            print("Error: Datos base o clústeres no encontrados. Ejecuta pipeline.py y evaluacion.py primero.")
+            print("Error: Datos base no encontrados. Ejecuta pipeline.py primero.")
             return
-
-        vector_nuevo = generar_embeddings([texto_evaluar], nombre_modelo=args.modelo, normalizar=True)[0]
-        inferir_y_mostrar_cercanos(vector_nuevo, X_train, y_train, textos_train, k=3)
-        return
 
         vector_nuevo = generar_embeddings([texto_evaluar], nombre_modelo=args.modelo, normalizar=True)[0]
         inferir_y_mostrar_cercanos(vector_nuevo, X_train, y_train, textos_train, k=3)
