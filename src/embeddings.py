@@ -346,6 +346,7 @@ def perfilar_coste_computacional(X: np.ndarray, lista_n=(100, 200, 300, 400, 500
         - Devuelve una lista de diccionarios con el profiling de tiempo y memoria.
     """
     import time
+    import tracemalloc
     try:
         from src.clustering.hierarchical import MotorJerarquico
     except (ImportError, ModuleNotFoundError):
@@ -361,6 +362,10 @@ def perfilar_coste_computacional(X: np.ndarray, lista_n=(100, 200, 300, 400, 500
         if n > N_total:
             continue
         sub_X = X[:n]
+
+        # Iniciar rastreo empírico de memoria RAM para medir el pico real de consumo
+        tracemalloc.start()
+        tracemalloc.reset_peak()
 
         # 1. Tiempo Coseno
         t0 = time.perf_counter()
@@ -378,8 +383,15 @@ def perfilar_coste_computacional(X: np.ndarray, lista_n=(100, 200, 300, 400, 500
         _ = motor.fit(D_cos_sub)
         t_clustering = time.perf_counter() - t0
 
-        # 4. Memoria teórica de la matriz (float32 = 4 bytes)
-        memoria_mb = (n * n * 4) / (1024 * 1024)
+        # Obtener pico de asignación real de memoria en RAM
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        pico_ram_mb = peak_bytes / (1024 * 1024)
+
+        # 4. Memoria teórica estática de la matriz NxN (float32 = 4 bytes)
+        memoria_teorica_mb = (n * n * 4) / (1024 * 1024)
+
+        print(f"      N = {n:3d} | Tiempo Pipeline: {t_cos + t_clustering:6.4f}s | Pico RAM Real: {pico_ram_mb:5.2f} MB (Teórica NxN: {memoria_teorica_mb:5.2f} MB)")
 
         resultados.append({
             "N": n,
@@ -388,7 +400,9 @@ def perfilar_coste_computacional(X: np.ndarray, lista_n=(100, 200, 300, 400, 500
             "Tiempo_Euclidea_seg": round(t_euc, 5),
             "Tiempo_Clustering_Jerarquico_seg": round(t_clustering, 4),
             "Tiempo_Total_Pipeline_seg": round(t_cos + t_clustering, 4),
-            "Memoria_Matriz_MB": round(memoria_mb, 4)
+            "Memoria_Matriz_MB": round(memoria_teorica_mb, 4),
+            "Memoria_Teorica_Matriz_MB": round(memoria_teorica_mb, 4),
+            "Memoria_Pico_Real_MB": round(pico_ram_mb, 4),
         })
 
     return resultados
