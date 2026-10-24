@@ -140,6 +140,16 @@ def cargar_datos(ruta_csv: str = "data/500_Reddit_users_posts_labels.csv", n_mue
 
 
 def main():
+    """
+    Punto de entrada para el pipeline de extracción de embeddings y matrices de proximidad.
+
+    Pre-condiciones:
+        - Archivo CSV con posts clínicos accesible en ruta indicada o por defecto data/.
+        - Paquetes de sentence-transformers y numpy disponibles.
+    Post-condiciones:
+        - Genera y serializa embeddings densos y matrices de distancias en la carpeta data_processed/.
+        - Si se activa --infer o --texto, ejecuta la asignación al cluster y búsqueda de vecinos más cercanos.
+    """
     parser = argparse.ArgumentParser(description="Pipeline de embeddings y matrices de proximidad")
     parser.add_argument(
         "--csv",
@@ -151,11 +161,24 @@ def main():
     parser.add_argument("--modelo", type=str, default="all-MiniLM-L6-v2", help="Modelo de SBERT")
     parser.add_argument("--salida", type=str, default="data_processed", help="Carpeta de salida")
     parser.add_argument("--texto", type=str, default=None, help="Introduce un texto en inglés para evaluar su riesgo.")
-    parser.add_argument("--infer", action="store_true", help="Activa el modo de inferencia.")
+    parser.add_argument(
+        "--infer",
+        type=str,
+        nargs="?",
+        const="DEFAULT",
+        default=None,
+        help="Activa el modo de inferencia o especifica directamente el texto a inferir (compatible con main.py)."
+    )
     args = parser.parse_args()
 
-    if args.texto or args.infer:
-        texto_evaluar = args.texto if args.texto else "I feel so overwhelmed and I don't know what to do."
+    if args.texto or args.infer is not None:
+        if args.texto:
+            texto_evaluar = args.texto
+        elif args.infer != "DEFAULT":
+            texto_evaluar = args.infer
+        else:
+            texto_evaluar = "I feel so overwhelmed and I don't know what to do."
+
         print(f"\n[MODO INFERENCIA] Procesando nuevo texto: '{texto_evaluar}'")
 
         from src.evaluacion import inferir_y_mostrar_cercanos

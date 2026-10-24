@@ -26,7 +26,7 @@ import json
 import time
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -131,9 +131,13 @@ def experimento_impacto_dimensionalidad(X, y_true, k_optimo=15, dimensiones=(2, 
     X_train_pca = pca_demo.fit_transform(X[:400])
     x_test_sample = X[400]  # instancia no vista de test en R^384
     x_test_proyectado = pca_demo.transform(x_test_sample.reshape(1, -1))[0]  # proyeccion sin refit en R^10
-    dist_pca = np.linalg.norm(X_train_pca - x_test_proyectado, axis=1)
+    # Distancia Coseno en el subespacio proyectado R^10 (coherente con la métrica del clustering):
+    norm_tr = np.linalg.norm(X_train_pca, axis=1)
+    norm_te = np.linalg.norm(x_test_proyectado)
+    sim_cos_pca = np.dot(X_train_pca, x_test_proyectado) / (np.maximum(norm_tr * norm_te, 1e-12))
+    dist_pca = 1.0 - np.clip(sim_cos_pca, -1.0, 1.0)
     nn_pca = int(np.argmin(dist_pca))
-    print(f"  [Proyección Subespacio PCA D=10] Muestra #400 proyectada con pca.transform (sin refit) -> 1-NN: Post #{nn_pca} (d={dist_pca[nn_pca]:.4f})")
+    print(f"  [Proyección Subespacio PCA D=10] Muestra #400 proyectada con pca.transform (sin refit) -> 1-NN (Coseno): Post #{nn_pca} (d_cos={dist_pca[nn_pca]:.4f})")
 
     return resultados_dim
 
@@ -171,6 +175,14 @@ def experimento_impacto_normalizacion(textos, y_true, X_norm=None, k_optimo=15):
     filas, cols = np.triu_indices(len(textos), k=1)
 
     def stats_dist(D_mat):
+        """
+        Calcula estadísticos de dispersión y contraste dimensional relativo (Aggarwal et al., 2001).
+
+        Pre-condiciones:
+            - D_mat: numpy.ndarray cuadrada (N, N) de distancias simétricas.
+        Post-condiciones:
+            - Devuelve dict con media, desviación típica y contraste relativo C_R = (d_max - d_min) / d_min.
+        """
         pares = D_mat[filas, cols]
         d_min, d_max = float(np.min(pares)), float(np.max(pares))
         c_r = (d_max - d_min) / (d_min if d_min > 1e-6 else 1e-6)
@@ -235,12 +247,25 @@ def experimento_impacto_normalizacion(textos, y_true, X_norm=None, k_optimo=15):
     return res
 
 
-def experimento_representacion_tfidf_vs_sbert(textos, y_true, k_optimo=15):
+def experimento_representacion_tfidf_vs_sbert(textos, y_true, X_sbert=None, k_optimo=15):
     """
-    Compara la aproximación dispersa clásica (TF-IDF) frente a la densa contextual (SBERT).
-    Evalúa dimensionalidad, esparsidad, CPCC, Silueta y Pureza.
+    Compara empíricamente representaciones dispersas clásicas (TF-IDF), representaciones
+    densas estáticas (LSA / TruncatedSVD a 384D) y representaciones densas contextuales (SBERT all-MiniLM-L6-v2 a 384D).
+
+    Evalúa:
+      1. Dimensionalidad y esparsidad del espacio vectorial.
+      2. Calidad interna (CPCC, Silueta) y externa (Pureza, F1-Macro, Rand) bajo Lance-Williams Scratch.
+      3. Diagnóstico cuantitativo de polisemia y contexto clínico (Aggarwal et al. / Reimers & Gurevych).
+
+    Pre-condiciones:
+        - textos: lista de N strings con los posts del corpus.
+        - y_true: array 1D de longitud N con las clases reales.
+        - X_sbert: matriz (N, 384) opcional con embeddings precalculados de SBERT.
+        - k_optimo: número de clusters a cortar en el dendrograma (por defecto 15).
+    Post-condiciones:
+        - Devuelve diccionario con estadísticas de cada representación y test de polisemia.
     """
-    print("\n[EXPERIMENTO 3] Comparativa Representación Dispersa (TF-IDF) vs Densa (SBERT)...")
+    print("\n[EXPERIMENTO 3] Comparativa Representación Dispersa (TF-IDF) vs Densa Estática (LSA) vs Densa Contextual (SBERT)...")
     t0 = time.time()
     vectorizer = TfidfVectorizer(max_features=5000, stop_words="english", min_df=2)
     X_tfidf_sparse = vectorizer.fit_transform(textos)
@@ -250,7 +275,7 @@ def experimento_representacion_tfidf_vs_sbert(textos, y_true, k_optimo=15):
     N, D_vocab = X_tfidf.shape
     esparsidad = float(np.sum(X_tfidf == 0.0) / (N * D_vocab)) * 100.0
 
-    # Distancia Coseno para TF-IDF
+    # 1. Distancia Coseno para TF-IDF Disperso
     D_cos_tfidf = calcular_matriz_distancias_scratch(X_tfidf, metrica="cosine")
     motor_tfidf = MotorJerarquico(tipo_enlace="complete")
     Z_tfidf = motor_tfidf.fit(D_cos_tfidf)
@@ -260,6 +285,66 @@ def experimento_representacion_tfidf_vs_sbert(textos, y_true, k_optimo=15):
     sil_tfidf = calcular_silhouette_scratch(D_cos_tfidf, pred_tfidf)
     clf_tfidf = calcular_metricas_clasificacion_clustering_scratch(y_true, pred_tfidf)
     ext_tfidf = calcular_metricas_externas(y_true, pred_tfidf)
+
+    # 2. Representación Densa Estática (LSA / TruncatedSVD 384D normalizado L2)
+    t0 = time.time()
+    lsa = TruncatedSVD(n_components=min(384, D_vocab - 1), random_state=42)
+    X_lsa_raw = lsa.fit_transform(X_tfidf_sparse)
+    normas_lsa = np.linalg.norm(X_lsa_raw, axis=1, keepdims=True)
+    normas_lsa = np.where(normas_lsa == 0.0, 1.0, normas_lsa)
+    X_lsa = (X_lsa_raw / normas_lsa).astype(np.float32)
+    t_lsa = time.time() - t0
+
+    D_cos_lsa = calcular_matriz_distancias_scratch(X_lsa, metrica="cosine")
+    motor_lsa = MotorJerarquico(tipo_enlace="complete")
+    Z_lsa = motor_lsa.fit(D_cos_lsa)
+    pred_lsa = cortar_dendrograma_scratch(Z_lsa, n_clusters=k_optimo)
+
+    cpcc_lsa = calcular_cpcc_scratch(D_cos_lsa, Z_lsa)
+    sil_lsa = calcular_silhouette_scratch(D_cos_lsa, pred_lsa)
+    clf_lsa = calcular_metricas_clasificacion_clustering_scratch(y_true, pred_lsa)
+    ext_lsa = calcular_metricas_externas(y_true, pred_lsa)
+
+    # 3. Representación Densa Contextual (SBERT all-MiniLM-L6-v2 384D)
+    t0 = time.time()
+    if X_sbert is None:
+        X_sbert = generar_embeddings(textos, normalizar=True)
+    t_sbert = time.time() - t0
+
+    D_cos_sbert = calcular_matriz_distancias_scratch(X_sbert, metrica="cosine")
+    motor_sbert = MotorJerarquico(tipo_enlace="complete")
+    Z_sbert = motor_sbert.fit(D_cos_sbert)
+    pred_sbert = cortar_dendrograma_scratch(Z_sbert, n_clusters=k_optimo)
+
+    cpcc_sbert = calcular_cpcc_scratch(D_cos_sbert, Z_sbert)
+    sil_sbert = calcular_silhouette_scratch(D_cos_sbert, pred_sbert)
+    clf_sbert = calcular_metricas_clasificacion_clustering_scratch(y_true, pred_sbert)
+    ext_sbert = calcular_metricas_externas(y_true, pred_sbert)
+
+    # 4. Diagnóstico Experimental de Polisemia y Contexto Clínico
+    pares_test = [
+        ("We played a board game and rolled the die on the table.",
+         "I cannot take the pain anymore and I just want to die tonight."),
+        ("I accidentally cut my finger while preparing dinner in the kitchen.",
+         "I cannot control the dark urge to cut my wrists when I feel alone."),
+    ]
+    diag_polisemia = []
+    for s_neutra, s_clinica in pares_test:
+        v_tf = vectorizer.transform([s_neutra, s_clinica])
+        v_lsa_p = lsa.transform(v_tf)
+        v_lsa_n = v_lsa_p / np.maximum(np.linalg.norm(v_lsa_p, axis=1, keepdims=True), 1e-12)
+        sim_estatica = float(np.dot(v_lsa_n[0], v_lsa_n[1]))
+
+        v_ctx = generar_embeddings([s_neutra, s_clinica], normalizar=True)
+        sim_contextual = float(np.dot(v_ctx[0], v_ctx[1]))
+
+        diag_polisemia.append({
+            "frase_neutra": s_neutra,
+            "frase_clinica": s_clinica,
+            "similitud_estatica_lsa": round(sim_estatica, 4),
+            "similitud_contextual_sbert": round(sim_contextual, 4),
+            "reduccion_falso_positivo": round(sim_estatica - sim_contextual, 4),
+        })
 
     res = {
         "tfidf_disperso": {
@@ -271,9 +356,38 @@ def experimento_representacion_tfidf_vs_sbert(textos, y_true, k_optimo=15):
             "accuracy_pureza": round(float(clf_tfidf["accuracy_pureza"]), 4),
             "f1_macro": round(float(clf_tfidf["f1_macro"]), 4),
             "rand_index": round(float(ext_tfidf["rand_index"]), 4),
-        }
+        },
+        "lsa_denso_estatico": {
+            "dimension": int(X_lsa.shape[1]),
+            "esparsidad_porcentaje": 0.0,
+            "tiempo_extraccion_seg": round(t_lsa, 4),
+            "cpcc": round(float(cpcc_lsa), 4),
+            "silhouette": round(float(sil_lsa), 4),
+            "accuracy_pureza": round(float(clf_lsa["accuracy_pureza"]), 4),
+            "f1_macro": round(float(clf_lsa["f1_macro"]), 4),
+            "rand_index": round(float(ext_lsa["rand_index"]), 4),
+        },
+        "sbert_denso_contextual": {
+            "dimension": int(X_sbert.shape[1]),
+            "esparsidad_porcentaje": 0.0,
+            "tiempo_extraccion_seg": round(t_sbert, 4),
+            "cpcc": round(float(cpcc_sbert), 4),
+            "silhouette": round(float(sil_sbert), 4),
+            "accuracy_pureza": round(float(clf_sbert["accuracy_pureza"]), 4),
+            "f1_macro": round(float(clf_sbert["f1_macro"]), 4),
+            "rand_index": round(float(ext_sbert["rand_index"]), 4),
+        },
+        "diagnostico_polisemia": diag_polisemia,
     }
-    print(f"  [TF-IDF Disperso] Dim: {D_vocab} | Esparsidad: {esparsidad:.1f}% | Silueta: {sil_tfidf:.4f} | Pureza: {clf_tfidf['accuracy_pureza']*100:.2f}% | CPCC: {cpcc_tfidf:.4f}")
+
+    print(f"  [TF-IDF Disperso   (D={D_vocab})] Silueta: {sil_tfidf:.4f} | Pureza: {clf_tfidf['accuracy_pureza']*100:.2f}% | F1: {clf_tfidf['f1_macro']:.4f} | CPCC: {cpcc_tfidf:.4f}")
+    print(f"  [LSA Denso Estático(D=384) ] Silueta: {sil_lsa:.4f} | Pureza: {clf_lsa['accuracy_pureza']*100:.2f}% | F1: {clf_lsa['f1_macro']:.4f} | CPCC: {cpcc_lsa:.4f}")
+    print(f"  [SBERT Contextual  (D=384) ] Silueta: {sil_sbert:.4f} | Pureza: {clf_sbert['accuracy_pureza']*100:.2f}% | F1: {clf_sbert['f1_macro']:.4f} | CPCC: {cpcc_sbert:.4f}")
+    print(f"\n  [DIAGNÓSTICO DE POLISEMIA CLÍNICA (Estático vs Contextual)]")
+    for d in diag_polisemia:
+        print(f"    * Contextos: \"{d['frase_neutra'][:38]}...\" vs \"{d['frase_clinica'][:38]}...\"")
+        print(f"      Similitud LSA Estático:    {d['similitud_estatica_lsa']:.4f} (Confusión por palabra compartida)")
+        print(f"      Similitud SBERT Contextual:{d['similitud_contextual_sbert']:.4f} (Discriminación por contexto clínico)")
     return res
 
 
@@ -336,17 +450,17 @@ def generar_figura_evidencias_experimentales(res_dim, res_norm, res_tfidf, sbert
     ax1_twin.set_ylabel("Pureza / Clustering Accuracy (%)", color=color_acc, fontsize=10, fontweight="bold")
     ax1_twin.tick_params(axis="y", labelcolor=color_acc)
 
-    # Panel B: Comparativa de Representaciones (TF-IDF vs SBERT Raw vs SBERT Norm)
-    modelos = ["TF-IDF\n(Disperso)", "SBERT Raw\n(Sin Norm)", "SBERT Norm\n(L2 Unitario)"]
+    # Panel B: Comparativa de Representaciones (TF-IDF vs LSA Estático vs SBERT Contextual)
+    modelos = ["TF-IDF\n(Disperso)", "LSA 384D\n(Estático)", "SBERT 384D\n(Contextual)"]
     pures = [
         res_tfidf["tfidf_disperso"]["accuracy_pureza"] * 100,
-        res_norm["sin_normalizar"]["accuracy_pureza"] * 100,
-        res_norm["con_normalizacion_l2"]["accuracy_pureza"] * 100,
+        res_tfidf.get("lsa_denso_estatico", {}).get("accuracy_pureza", 0.0) * 100,
+        res_tfidf.get("sbert_denso_contextual", {}).get("accuracy_pureza", res_norm["con_normalizacion_l2"]["accuracy_pureza"]) * 100,
     ]
     sil_vals = [
         res_tfidf["tfidf_disperso"]["silhouette"],
-        res_norm["sin_normalizar"]["silhouette"],
-        res_norm["con_normalizacion_l2"]["silhouette"],
+        res_tfidf.get("lsa_denso_estatico", {}).get("silhouette", 0.0),
+        res_tfidf.get("sbert_denso_contextual", {}).get("silhouette", res_norm["con_normalizacion_l2"]["silhouette"]),
     ]
 
     x = np.arange(len(modelos))
@@ -553,8 +667,8 @@ def ejecutar_todos_los_experimentos():
     # 2. Normalización L2
     res_norm = experimento_impacto_normalizacion(textos, y_true, X_norm=X, k_optimo=15)
 
-    # 3. TF-IDF vs SBERT
-    res_tfidf = experimento_representacion_tfidf_vs_sbert(textos, y_true, k_optimo=15)
+    # 3. TF-IDF vs LSA Estático vs SBERT Contextual
+    res_tfidf = experimento_representacion_tfidf_vs_sbert(textos, y_true, X_sbert=X, k_optimo=15)
 
     # 4. Referencia Random
     res_random = experimento_referencia_random(y_true, k_optimo=15)

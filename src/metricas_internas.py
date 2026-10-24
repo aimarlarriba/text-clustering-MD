@@ -24,7 +24,7 @@ def calcular_matriz_cofenetica_scratch(matriz_linkage):
 
     # Detectamos automáticamente si linkage_matrix usa IDs estándar (N + paso)
     # o si reutiliza los índices de fila (0 .. N-1)
-    usa_ids_estandar = np.max(L[:, :2]) >= N
+    usa_ids_estandar = (N == 2) or (np.max(L[:, :2]) >= N)
 
     for paso in range(N - 1):
         c1 = int(L[paso, 0])
@@ -139,8 +139,8 @@ def calcular_silhouette_scratch(matriz_distancias, etiquetas_predichas, devolver
             continue
 
         # 1. Cohesión a(i): distancia media a los puntos de su propio cluster (sin contarse a sí mismo)
-        suma_propio = np.sum(D[i, miembros_propios]) - D[i, i]
-        a_i[i] = suma_propio / (len(miembros_propios) - 1)
+        otros_miembros = miembros_propios[miembros_propios != i]
+        a_i[i] = float(np.mean(D[i, otros_miembros])) if len(otros_miembros) > 0 else 0.0
 
         # 2. Separación b(i): mínima distancia media a cualquier otro cluster diferente
         min_dist_vecino = np.inf

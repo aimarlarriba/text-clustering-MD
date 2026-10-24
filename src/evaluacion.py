@@ -205,7 +205,8 @@ def extraer_y_visualizar_centroides_textuales_scratch(
     etiquetas_reales,
     textos_reales,
     k_representar=15,
-    carpeta_salida="data_processed/graficas_informe"
+    carpeta_salida="data_processed/graficas_informe",
+    k_max=None,
 ):
     """
     Caracteriza profundamente qué representa cada Cluster (Codebook de Centroides m_j) mediante:
@@ -565,10 +566,10 @@ def extraer_y_visualizar_centroides_textuales_scratch(
     plt.close(fig)
 
     # =========================================================================
-    # FIGURA 8: CORRELACIÓN EXTERNA CON LA REALIDAD EN k ∈ [2, √N=22]
+    # FIGURA 8: CORRELACIÓN EXTERNA CON LA REALIDAD EN k ∈ [2, k_max]
     # =========================================================================
-    k_max_sqrt = max(10, int(np.sqrt(N)))
-    rango_k = list(range(2, k_max_sqrt + 1))
+    k_max_lim = k_max if k_max is not None else max(10, int(np.sqrt(N)))
+    rango_k = list(range(2, k_max_lim + 1))
     acc_vals, kappa_vals, f1_vals, rand_vals, jacc_vals = [], [], [], [], []
 
     for k in rango_k:
@@ -583,8 +584,9 @@ def extraer_y_visualizar_centroides_textuales_scratch(
         jacc_vals.append(m_pares["jaccard"])
 
     fig, ax = plt.subplots(figsize=(11.5, 6.4))
+    k_tit = f"√N = {k_max_lim}" if k_max is None else str(k_max_lim)
     fig.suptitle(
-        f"Evaluación Externa: Correlación con las Clases Clínicas C-SSRS en k ∈ [2, √N = {k_max_sqrt}]",
+        f"Evaluación Externa: Correlación con las Clases Clínicas C-SSRS en k ∈ [2, {k_tit}]",
         fontsize=13.5, fontweight="bold", y=0.97
     )
     plt.figtext(
@@ -846,10 +848,15 @@ def generar_figura_matriz_confusion_heatmap(
     return ruta_fig10
 
 
-def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
+def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None, k_max=None):
     """
     Ejecuta el protocolo completo de evaluación interna, externa, Holdout e inferencia.
     Genera las 8 figuras científicas del informe.
+
+    Pre-condiciones:
+        - carpeta_datos: ruta al directorio con artefactos .npy y .json (o None para data_processed).
+        - carpeta_salida: ruta de destino para guardar las figuras científicas.
+        - k_max: int opcional con la cota superior del espacio de búsqueda para k (None = sqrt(N)).
     """
     print("Iniciando evaluación...")
 
@@ -927,10 +934,12 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
         carpeta_salida=carpeta_salida,
     )
 
-    # Selección no supervisada de K en [2, sqrt(N)=22] (sin prefijar K=5 a dedo)
-    opt_info = optimizar_hiperparametros_internos(matriz_distancias)
+    # Selección no supervisada de K (sin prefijar K=5 a dedo)
+    rango_busqueda = range(2, k_max + 1) if k_max is not None else None
+    opt_info = optimizar_hiperparametros_internos(matriz_distancias, rango_k=rango_busqueda)
     k_pico_equilibrado = opt_info["mejor_particion_equilibrada"]["k_optimo"] or 7
-    print(f"\n[OPTIMIZACION NO SUPERVISADA k en [2, sqrt(N)=22]]")
+    k_limite_str = str(k_max) if k_max is not None else f"sqrt(N)={int(np.sqrt(len(vectores_densos)))}"
+    print(f"\n[OPTIMIZACION NO SUPERVISADA k en [2, {k_limite_str}]]")
     print(f"  - Maximo Global Silhouette: Enlace='{opt_info['mejor_global']['enlace']}', k_opt={opt_info['mejor_global']['k_optimo']} (S_media={opt_info['mejor_global']['silhouette']:.4f})")
     print(f"  - Mejor Particion Equilibrada (sin macro-cluster >80%): Enlace='{opt_info['mejor_particion_equilibrada']['enlace']}', k_opt={k_pico_equilibrado} (S_media={opt_info['mejor_particion_equilibrada']['silhouette']:.4f})")
     print(f"  - Picos locales detectados (Complete-Link): {opt_info['resultados_por_enlace']['complete']['picos_locales_silhouette']}")
@@ -961,6 +970,7 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
         textos_reales,
         k_representar=k_pico_equilibrado,
         carpeta_salida=carpeta_salida,
+        k_max=k_max,
     )
 
     # Evaluación Honesta Holdout (N1-Train = 400, N2-Test = 100 no vistos en el clustering)
@@ -1094,4 +1104,4 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None):
 
 
 if __name__ == "__main__":
-    ejecutar_evaluacion()
+    ejecutar_evaluacion()

@@ -84,9 +84,8 @@ class MotorJerarquico:
             n_muestras = tamano_clusters[id1] + tamano_clusters[id2]
             tamano_clusters[nuevo_id_cluster] = n_muestras
 
-            # 4. Actualizar la matriz de distancias usando Lance-Williams
+            # 4. Actualizar la matriz de distancias y el tamaño del cluster fusionado usando Lance-Williams
             self._actualizar_distancias(D, cluster1, cluster2, tamanos_matriz)
-            tamanos_matriz[cluster1] = n_muestras
 
             # 5. Guardar la fusión en linkage_matrix
             self.linkage_matrix[paso] = [id1, id2, distancia_minima, n_muestras]

@@ -133,10 +133,66 @@ def ejecutar_toy_example():
         idx_global = indices_en_cluster[idx_rel]
         print(f"    {pos}. Instancia #{idx_global} (Coords: {X_toy[idx_global]}, Dist: {dists_intra[idx_rel]:.4f})")
 
+    # -------------------------------------------------------------------------
+    # 6. DEMOSTRACIÓN TEXTUAL REAL (TEXT CLUSTERING SOBRE MINI-CORPUS)
+    # -------------------------------------------------------------------------
+    print("\n--- 6. Demostración sobre Corpus Textual Clínico (Mini-Corpus) ---")
+    textos_toy = [
+        # Categoría A: Ideación / Desesperanza
+        "I feel completely hopeless and I cannot see any reason to keep waking up.",
+        "Everything hurts inside and I just want to fall asleep and never wake up again.",
+        # Categoría B: Apoyo / Mensajes de ayuda
+        "Please remember that you are not alone, there are hotlines and people who care.",
+        "We want to listen and help you through this difficult time, please send me a message.",
+        # Categoría C: Neutro / Conversacional
+        "I went to the store today to buy some groceries for the weekend.",
+        "The weather has been quite rainy all afternoon so I stayed home watching movies.",
+    ]
+    clases_toy_text = np.array([0, 0, 1, 1, 2, 2], dtype=int)
+    nombres_grupos = {0: "Ideación / Desesperanza", 1: "Apoyo / Red de Ayuda", 2: "Neutro / Cotidiano"}
+
+    print(f"  Mini-corpus definido con {len(textos_toy)} textos en 3 categorías temáticas:")
+    for idx_t, txt in enumerate(textos_toy):
+        print(f"    [{idx_t}] ({nombres_grupos[clases_toy_text[idx_t]]}) \"{txt}\"")
+
+    try:
+        from src.embeddings import generar_embeddings, calcular_matriz_distancias_scratch
+        from src.evaluacion import inferir_y_mostrar_cercanos
+
+        print("\n  Generando embeddings densos con SBERT (all-MiniLM-L6-v2) normalizados L2...")
+        X_txt = generar_embeddings(textos_toy, normalizar=True)
+        D_cos_txt = calcular_matriz_distancias_scratch(X_txt, metrica="cosine")
+
+        motor_txt = MotorJerarquico(tipo_enlace="complete")
+        Z_txt = motor_txt.fit(D_cos_txt)
+        pred_txt = cortar_dendrograma_scratch(Z_txt, n_clusters=3)
+
+        sil_txt = calcular_silhouette_scratch(D_cos_txt, pred_txt)
+        cpcc_txt = calcular_cpcc_scratch(D_cos_txt, Z_txt)
+        ext_txt = calcular_metricas_externas(clases_toy_text, pred_txt)
+
+        print(f"\n  Clustering Jerárquico Aglomerativo sobre texto (Scratch):")
+        print(f"    - Asignación de clusters descubierta: {pred_txt}")
+        print(f"    - Silhouette Score (Coseno, K=3):    {sil_txt:.4f}")
+        print(f"    - Coeficiente Cofenético (CPCC):     {cpcc_txt:.4f}")
+        print(f"    - Rand Index (vs categorías reales): {ext_txt['rand_index']:.4f}")
+
+        # Inferencia semántica interactiva con un nuevo texto de prueba
+        texto_prueba = "I need someone to talk to, I feel so sad and lonely tonight."
+        print(f"\n  Inferencia semántica intra-cluster con nuevo texto: \"{texto_prueba}\"")
+        vector_prueba = generar_embeddings([texto_prueba], normalizar=True)[0]
+        cluster_recup, mas_cercanos = inferir_y_mostrar_cercanos(
+            vector_prueba, X_txt, pred_txt, textos_toy, k=2, metrica="cosine"
+        )
+        print(f"  -> Asignado con éxito al Cluster C{cluster_recup}")
+    except Exception as e:
+        print(f"  [Aviso en demostración textual]: {e}")
+
     print("\n" + "=" * 70)
-    print(" [OK] Demostración de toy-example ejecutada con éxito.")
+    print(" [OK] Demostración de toy-example ejecutada con éxito (2D sintético y Texto real).")
     print("=" * 70)
 
 
 if __name__ == "__main__":
     ejecutar_toy_example()
+

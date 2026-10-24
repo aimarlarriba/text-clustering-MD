@@ -128,7 +128,7 @@ def ejecutar_paso_embeddings(csv_path=None, n_muestras=DEFAULT_N_SAMPLES, modelo
     return True
 
 
-def ejecutar_paso_evaluacion():
+def ejecutar_paso_evaluacion(k_max=None):
     """Fase 2 & 3: Clustering, validación interna/externa, Holdout, figuras 1-8 e inferencia."""
     print("\n" + "=" * 70)
     print(" [FASE 2 Y 3] CLUSTERING JERÁRQUICO, VALIDACIÓN CIENTÍFICA E INFERENCIA")
@@ -139,6 +139,7 @@ def ejecutar_paso_evaluacion():
     resultados = ejecutar_evaluacion(
         carpeta_datos=str(PROCESSED_DATA_DIR),
         carpeta_salida=str(REPORTS_DIR),
+        k_max=k_max,
     )
     if resultados:
         print("\n" + "=" * 70)
@@ -180,6 +181,17 @@ def ejecutar_toy():
 
 
 def main():
+    """
+    Punto de entrada principal para la orquestación integral del proyecto text-clustering-MD.
+
+    Pre-condiciones:
+        - Argumentos CLI proporcionados a través de sys.argv (opciones de fase, hiperparámetros y rutas).
+        - Dependencias del sistema y librerías de requirements.txt instaladas.
+    Post-condiciones:
+        - Orquesta la ejecución de las fases solicitadas (embeddings, evaluación, experimentos o toy-example).
+        - Genera los artefactos .npy/.json en data_processed/ y las figuras en graficas_informe/.
+        - Retorna código de salida del proceso (0 en éxito, 1 ante fallos).
+    """
     parser = argparse.ArgumentParser(
         description="Pipeline integral de Text Clustering (text-clustering-MD)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -237,6 +249,12 @@ def main():
         type=int,
         default=3,
         help="Número de instancias más cercanas a mostrar dentro del cluster asignado (por defecto 3)",
+    )
+    parser.add_argument(
+        "--k_max",
+        type=int,
+        default=None,
+        help="Límite superior del espacio de búsqueda no supervisado para optimizar k en [2, k_max] (por defecto: floor(sqrt(N)))",
     )
 
     args = parser.parse_args()
@@ -296,7 +314,7 @@ def main():
             print("       (Para regenerarlos, ejecuta con '--step embeddings')")
 
     if args.step in ["all", "evaluacion"]:
-        exito2 = ejecutar_paso_evaluacion()
+        exito2 = ejecutar_paso_evaluacion(k_max=args.k_max)
         if not exito2:
             sys.exit(1)
 
