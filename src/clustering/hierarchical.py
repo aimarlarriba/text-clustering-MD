@@ -115,5 +115,20 @@ class MotorJerarquico:
         """
         actualizar_matriz_lance_williams(D, cluster1, cluster2, self.tipo_enlace, tamanos_matriz)
 
+    def predict(self, distancias_test_vs_train, etiquetas_train):
+        """
+        Inferencia transductiva (1-NN) para nuevas muestras.
+        
+        Pre-condiciones:
+            - distancias_test_vs_train: ndarray (M, N_train) con las distancias de M nuevas muestras a las N de entrenamiento.
+            - etiquetas_train: ndarray 1D de longitud N_train con los clusters asignados.
+            
+        Post-condiciones:
+            - Devuelve un array 1D de longitud M con el cluster asignado a cada nueva muestra.
+        """
+        import numpy as np
+        vecinos_cercanos = np.argmin(distancias_test_vs_train, axis=1)
+        return etiquetas_train[vecinos_cercanos]
+
 
         
