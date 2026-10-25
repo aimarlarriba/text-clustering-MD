@@ -656,39 +656,110 @@ def cortar_arbol(matriz_linkage, altura_h=None, n_clusters=None):
 
 
 def visualizar_pca_clusters(vectores_densos, etiquetas_predichas,
-                            ruta_salida="data_processed/graficas_informe/fig6a_mapa_pca_centroides.png"):
+                            ruta_salida="data_processed/graficas_informe/fig6a_mapa_pca_clusters.png"):
     """
     Pre-condiciones: vectores_densos array (N, D), etiquetas_predichas array (N,), ruta_salida válida.
-    Post-condiciones: Guarda figura PNG en disco sin interrumpir la ejecución.
+    Post-condiciones: Guarda figura PNG con proyección PCA 2D estandarizada en disco.
     """
     os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
+    k_clusters = len(np.unique(etiquetas_predichas))
     pca = PCA(n_components=2, random_state=42)
     vectores_2d = pca.fit_transform(vectores_densos)
-    plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(vectores_2d[:, 0], vectores_2d[:, 1], c=etiquetas_predichas, cmap='viridis', alpha=0.8,
-                          edgecolor='k')
-    plt.title("Proyección PCA de los Clusters")
-    plt.colorbar(scatter, label="Cluster ID")
+    var_pca1 = pca.explained_variance_ratio_[0] * 100
+    var_pca2 = pca.explained_variance_ratio_[1] * 100
+    var_total = var_pca1 + var_pca2
+
+    cmap = plt.colormaps['plasma'].resampled(k_clusters)
+    norm = mcolors.BoundaryNorm(boundaries=np.arange(-0.5, k_clusters + 0.5, 1), ncolors=k_clusters)
+
+    fig, ax = plt.subplots(figsize=(8.2, 6.2))
+    sc = ax.scatter(vectores_2d[:, 0], vectores_2d[:, 1], c=etiquetas_predichas, cmap=cmap, norm=norm,
+                    s=46, alpha=0.82, edgecolor='k', linewidth=0.6)
+    ax.set_title(f"Proyección PCA 2D de los Clusters (Varianza explicada: {var_total:.1f}%)",
+                 fontsize=12, fontweight="bold", pad=12)
+    ax.set_xlabel(f"Componente Principal 1 (PCA 1: {var_pca1:.1f}% varianza)", fontsize=10.5)
+    ax.set_ylabel(f"Componente Principal 2 (PCA 2: {var_pca2:.1f}% varianza)", fontsize=10.5)
+    ax.grid(True, linestyle=":", alpha=0.5, color="#888888")
+    cbar = plt.colorbar(sc, ax=ax, ticks=np.arange(0, k_clusters, 2), label=f"Cluster ID (k̂ = {k_clusters})")
+    cbar.ax.tick_params(labelsize=9.5)
+    plt.tight_layout()
     plt.savefig(ruta_salida, dpi=300)
-    plt.close()
+    plt.close(fig)
 
 
 def visualizar_tsne_clusters(vectores_densos, etiquetas_predichas,
                              ruta_salida="data_processed/graficas_informe/fig6b_mapa_tsne_clusters.png"):
     """
     Pre-condiciones: vectores_densos array (N, D), etiquetas_predichas array (N,), ruta_salida válida.
-    Post-condiciones: Guarda figura PNG proyectada mediante t-SNE en disco.
+    Post-condiciones: Guarda figura PNG proyectada mediante t-SNE con formato unificado idéntico a PCA.
     """
     os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
+    k_clusters = len(np.unique(etiquetas_predichas))
     tsne = TSNE(n_components=2, metric="cosine", random_state=42)
     vectores_2d = tsne.fit_transform(vectores_densos)
-    plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(vectores_2d[:, 0], vectores_2d[:, 1], c=etiquetas_predichas, cmap='plasma', alpha=0.8,
-                          edgecolor='k')
-    plt.title("Proyección t-SNE de los Clusters (Métrica Coseno)")
-    plt.colorbar(scatter, label="Cluster ID")
+
+    cmap = plt.colormaps['plasma'].resampled(k_clusters)
+    norm = mcolors.BoundaryNorm(boundaries=np.arange(-0.5, k_clusters + 0.5, 1), ncolors=k_clusters)
+
+    fig, ax = plt.subplots(figsize=(8.2, 6.2))
+    sc = ax.scatter(vectores_2d[:, 0], vectores_2d[:, 1], c=etiquetas_predichas, cmap=cmap, norm=norm,
+                    s=46, alpha=0.82, edgecolor='k', linewidth=0.6)
+    ax.set_title("Proyección t-SNE 2D de los Clusters (Métrica Coseno)",
+                 fontsize=12, fontweight="bold", pad=12)
+    ax.set_xlabel("Dimensión t-SNE 1", fontsize=10.5)
+    ax.set_ylabel("Dimensión t-SNE 2", fontsize=10.5)
+    ax.grid(True, linestyle=":", alpha=0.5, color="#888888")
+    cbar = plt.colorbar(sc, ax=ax, ticks=np.arange(0, k_clusters, 2), label=f"Cluster ID (k̂ = {k_clusters})")
+    cbar.ax.tick_params(labelsize=9.5)
+    plt.tight_layout()
     plt.savefig(ruta_salida, dpi=300)
-    plt.close()
+    plt.close(fig)
+
+
+def visualizar_comparativa_pca_tsne(vectores_densos, etiquetas_predichas,
+                                    ruta_salida="data_processed/graficas_informe/fig11_comparativa_proyeccion_pca_tsne.png"):
+    """
+    Pre-condiciones: vectores_densos array (N, D), etiquetas_predichas array (N,), ruta_salida válida.
+    Post-condiciones: Guarda figura PNG comparativa lado a lado (Panel A: PCA, Panel B: t-SNE) compartiendo escala y barra de color.
+    """
+    os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
+    k_clusters = len(np.unique(etiquetas_predichas))
+
+    pca = PCA(n_components=2, random_state=42)
+    X_pca = pca.fit_transform(vectores_densos)
+    var_pca1 = pca.explained_variance_ratio_[0] * 100
+    var_pca2 = pca.explained_variance_ratio_[1] * 100
+    var_total = var_pca1 + var_pca2
+
+    tsne = TSNE(n_components=2, metric="cosine", random_state=42)
+    X_tsne = tsne.fit_transform(vectores_densos)
+
+    cmap = plt.colormaps['plasma'].resampled(k_clusters)
+    norm = mcolors.BoundaryNorm(boundaries=np.arange(-0.5, k_clusters + 0.5, 1), ncolors=k_clusters)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15.5, 6.4))
+    sc1 = ax1.scatter(X_pca[:, 0], X_pca[:, 1], c=etiquetas_predichas, cmap=cmap, norm=norm,
+                      s=44, alpha=0.82, edgecolor='k', linewidth=0.6)
+    ax1.set_title(f"(A) Proyección Global PCA 2D (Varianza explicada: {var_total:.1f}%)", fontsize=11.5, fontweight="bold")
+    ax1.set_xlabel(f"PCA 1 ({var_pca1:.1f}% var)", fontsize=10)
+    ax1.set_ylabel(f"PCA 2 ({var_pca2:.1f}% var)", fontsize=10)
+    ax1.grid(True, linestyle=":", alpha=0.5, color="#888888")
+
+    sc2 = ax2.scatter(X_tsne[:, 0], X_tsne[:, 1], c=etiquetas_predichas, cmap=cmap, norm=norm,
+                      s=44, alpha=0.82, edgecolor='k', linewidth=0.6)
+    ax2.set_title("(B) Proyección Local t-SNE 2D (Métrica Coseno, Perplejidad = 30)", fontsize=11.5, fontweight="bold")
+    ax2.set_xlabel("Dimensión t-SNE 1", fontsize=10)
+    ax2.set_ylabel("Dimensión t-SNE 2", fontsize=10)
+    ax2.grid(True, linestyle=":", alpha=0.5, color="#888888")
+
+    cbar = fig.colorbar(sc2, ax=[ax1, ax2], ticks=np.arange(0, k_clusters), shrink=0.88, pad=0.02)
+    cbar.set_label(f"ID del Cluster (k̂ = {k_clusters})", fontsize=10.5)
+    cbar.ax.tick_params(labelsize=9)
+    fig.suptitle("Comparativa de Proyecciones del Espacio Latente: PCA (Lineal) vs. t-SNE (No Lineal)",
+                 fontsize=13.5, fontweight="bold", y=0.98)
+    plt.subplots_adjust(top=0.88, bottom=0.12, left=0.06, right=0.91, wspace=0.22)
+    plt.savefig(ruta_salida, dpi=300)
+    plt.close(fig)
 
 
 def inferir_y_mostrar_cercanos(
@@ -953,8 +1024,10 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None, k_max=None):
         k_max=k_max,
     )
 
-    # Generar también proyección t-SNE
+    # Generar proyecciones espaciales PCA, t-SNE y Comparativa con formato unificado
+    visualizar_pca_clusters(vectores_densos, pred_opt, ruta_salida=os.path.join(carpeta_salida, "fig6a_mapa_pca_clusters.png"))
     visualizar_tsne_clusters(vectores_densos, pred_opt, ruta_salida=os.path.join(carpeta_salida, "fig6b_mapa_tsne_clusters.png"))
+    visualizar_comparativa_pca_tsne(vectores_densos, pred_opt, ruta_salida=os.path.join(carpeta_salida, "fig11_comparativa_proyeccion_pca_tsne.png"))
 
     # 6. PROTOCOLO HOLDOUT FORMAL: Train (80%, N1=400) vs Test (20%, N2=100)
     print("\n[4/5] Ejecutando Protocolo Formal Holdout (Train 80% / Test 20%)...")
