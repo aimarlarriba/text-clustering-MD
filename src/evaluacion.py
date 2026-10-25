@@ -9,6 +9,7 @@ if hasattr(sys.stderr, "reconfigure"):
 import json
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 try:
@@ -661,7 +662,8 @@ def visualizar_pca_clusters(vectores_densos, etiquetas_predichas,
     Pre-condiciones: vectores_densos array (N, D), etiquetas_predichas array (N,), ruta_salida válida.
     Post-condiciones: Guarda figura PNG con proyección PCA 2D estandarizada en disco.
     """
-    os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
+    if os.path.dirname(ruta_salida):
+        os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
     k_clusters = len(np.unique(etiquetas_predichas))
     pca = PCA(n_components=2, random_state=42)
     vectores_2d = pca.fit_transform(vectores_densos)
@@ -693,7 +695,8 @@ def visualizar_tsne_clusters(vectores_densos, etiquetas_predichas,
     Pre-condiciones: vectores_densos array (N, D), etiquetas_predichas array (N,), ruta_salida válida.
     Post-condiciones: Guarda figura PNG proyectada mediante t-SNE con formato unificado idéntico a PCA.
     """
-    os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
+    if os.path.dirname(ruta_salida):
+        os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
     k_clusters = len(np.unique(etiquetas_predichas))
     tsne = TSNE(n_components=2, metric="cosine", random_state=42)
     vectores_2d = tsne.fit_transform(vectores_densos)
@@ -722,7 +725,8 @@ def visualizar_comparativa_pca_tsne(vectores_densos, etiquetas_predichas,
     Pre-condiciones: vectores_densos array (N, D), etiquetas_predichas array (N,), ruta_salida válida.
     Post-condiciones: Guarda figura PNG comparativa lado a lado (Panel A: PCA, Panel B: t-SNE) compartiendo escala y barra de color.
     """
-    os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
+    if os.path.dirname(ruta_salida):
+        os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
     k_clusters = len(np.unique(etiquetas_predichas))
 
     pca = PCA(n_components=2, random_state=42)
