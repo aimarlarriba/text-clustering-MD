@@ -111,7 +111,7 @@ def calcular_metricas_clasificacion_clustering_scratch(
     clusters_unicos = np.unique(y_pred)
     K = len(clusters_unicos)
 
-    # 1. Tabla de contingencia (K clusters x C clases reales)
+    #Tabla de contingencia (K clusters x C clases reales)
     tabla_contingencia = np.zeros((K, num_clases), dtype=int)
     mapeo_cluster_a_clase = {}
     y_pred_mapeado = np.zeros_like(y_true)
@@ -132,23 +132,23 @@ def calcular_metricas_clasificacion_clustering_scratch(
         mapeo_cluster_a_clase[int(c_id)] = clase_asignada
         y_pred_mapeado[mascara] = clase_asignada
 
-    # 2. Matriz de confusión cuadrada (num_clases x num_clases): Real (filas) vs Predicho (columnas)
+    #Matriz de confusión cuadrada (num_clases x num_clases): Real (filas) vs Predicho (columnas)
     matriz_confusion = np.zeros((num_clases, num_clases), dtype=int)
     for t, p in zip(y_true, y_pred_mapeado):
         matriz_confusion[t, p] += 1
 
-    # 3. Accuracy (Pureza del clustering)
+    #Accuracy (Pureza del clustering)
     aciertos = np.trace(matriz_confusion)
     accuracy_pureza = float(aciertos / N) if N > 0 else 0.0
 
-    # 4. Estadístico Kappa de Cohen (Slide 12 de 3_DM_HANDOUT.pdf)
+    #Estadístico Kappa de Cohen
     # p_0 = accuracy observada; p_e = probabilidad de acuerdo aleatorio manteniendo proporciones marginales
     totales_reales = np.sum(matriz_confusion, axis=1)
     totales_pred = np.sum(matriz_confusion, axis=0)
     p_e = float(np.sum(totales_reales * totales_pred)) / float(N * N) if N > 0 else 0.0
     kappa = (accuracy_pureza - p_e) / (1.0 - p_e) if (1.0 - p_e) > 1e-12 else 0.0
 
-    # 5. Precision, Recall y F-measure por clase (per-label), Macro y Weighted Average (Slide 9 de 3_DM_HANDOUT.pdf)
+    # Precision, Recall y F-measure por clase (per-label), Macro y Weighted Average
     precision_por_clase = []
     recall_por_clase = []
     f1_por_clase = []
@@ -293,7 +293,7 @@ def extraer_y_visualizar_centroides_textuales_scratch(
         for v3 in set(ventanas_doc):
             df_ventanas[v3] = df_ventanas.get(v3, 0) + 1
 
-    # --- Cortar en k_representar clusters y extraer 6 ventanas de 3 palabras + oración prototipo ---
+    # Cortar en k_representar clusters y extraer 6 ventanas de 3 palabras + oración prototipo
     Z_comp = MotorJerarquico(tipo_enlace="complete").fit(matriz_distancias)
     etiquetas_k = cortar_dendrograma_scratch(Z_comp, n_clusters=k_representar)
     res_clf = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales, etiquetas_k)
@@ -306,17 +306,17 @@ def extraer_y_visualizar_centroides_textuales_scratch(
         idx_c = np.where(etiquetas_k == c)[0]
         puntos_c = vectores_densos[idx_c]
 
-        # 1) Centroide matemático m_c
+        # Centroide matemático m_c
         m_c = np.mean(puntos_c, axis=0)
         centroides_384[c] = m_c
 
-        # 2) Post medoide (más cercano al centroide m_c) y los top 3 más cercanos al centroide
+        # Post medoide (más cercano al centroide m_c) y los top 3 más cercanos al centroide
         dists_al_centroide = np.linalg.norm(puntos_c - m_c, axis=1)
         orden_cercania = np.argsort(dists_al_centroide)
         idx_medoide_global = int(idx_c[int(orden_cercania[0])])
         top_docs_centrales = [int(idx_c[int(i)]) for i in orden_cercania[:min(5, len(idx_c))]]
 
-        # 3) Perfil léxico del cluster (c-TF-IDF de palabras individuales para puntuar importancia semántica)
+        # Perfil léxico del cluster (c-TF-IDF de palabras individuales para puntuar importancia semántica)
         tf_w_cluster = {}
         for doc_id in idx_c:
             for w in docs_palabras[doc_id]:
@@ -326,7 +326,7 @@ def extraer_y_visualizar_centroides_textuales_scratch(
             for w, freq in tf_w_cluster.items()
         }
 
-        # 4) Seleccionar 6 ventanas de 3 palabras (no solapadas entre sí) con mayor c-TF-IDF en el cluster
+        # Seleccionar 6 ventanas de 3 palabras (no solapadas entre sí) con mayor c-TF-IDF en el cluster
         tf_v3_cluster = {}
         for doc_id in idx_c:
             for v3 in docs_ventanas_3[doc_id]:
@@ -363,7 +363,7 @@ def extraer_y_visualizar_centroides_textuales_scratch(
             if v3 not in seis_ventanas:
                 seis_ventanas.append(v3)
 
-        # 5) Extraer la Oración Prototipo Central (la frase de los posts centrales con mayor densidad temática)
+        # Extraer la Oración Prototipo Central (la frase de los posts centrales con mayor densidad temática)
         mejor_oracion = ""
         mejor_score_oracion = -1.0
         for doc_id in top_docs_centrales:
@@ -414,9 +414,8 @@ def extraer_y_visualizar_centroides_textuales_scratch(
             f"    -> Oración Prototipo (Post #{idx_medoide_global}): \"{mejor_oracion}\""
         )
 
-    # =========================================================================
-    # FIGURA 6: MAPA PCA 2D DE CLUSTERS Y CENTROIDES (CON POSICIONES ANTICOLISIÓN)
-    # =========================================================================
+
+    # MAPA PCA 2D DE CLUSTERS Y CENTROIDES (CON POSICIONES ANTICOLISIÓN)
     pca = PCA(n_components=2, random_state=42)
     X_2d = pca.fit_transform(vectores_densos)
     centroides_2d = pca.transform(centroides_384)
@@ -488,9 +487,9 @@ def extraer_y_visualizar_centroides_textuales_scratch(
     plt.savefig(ruta_fig6, dpi=220)
     plt.close(fig)
 
-    # =========================================================================
-    # FIGURA 7: TABLA COMPLETA DEL CODEBOOK (6 VENTANAS DE 3 PALABRAS + ORACIÓN PROTOTIPO)
-    # =========================================================================
+
+    # TABLA COMPLETA DEL CODEBOOK (6 VENTANAS DE 3 PALABRAS + ORACIÓN PROTOTIPO)
+
     fig, ax_tab = plt.subplots(figsize=(17.5, 9.5))
     ax_tab.axis("off")
     fig.suptitle(
@@ -567,9 +566,9 @@ def extraer_y_visualizar_centroides_textuales_scratch(
     plt.savefig(ruta_fig7, dpi=220)
     plt.close(fig)
 
-    # =========================================================================
-    # FIGURA 8: CORRELACIÓN EXTERNA CON LA REALIDAD EN k ∈ [2, k_max]
-    # =========================================================================
+
+    # CORRELACIÓN EXTERNA CON LA REALIDAD EN k ∈ [2, k_max]
+
     k_max_lim = k_max if k_max is not None else max(10, int(np.sqrt(N)))
     rango_k = list(range(2, k_max_lim + 1))
     acc_vals, kappa_vals, f1_vals, rand_vals, jacc_vals = [], [], [], [], []
@@ -752,7 +751,7 @@ def inferir_y_mostrar_cercanos(
     else:
         raise ValueError(f"Métrica '{metrica}' no soportada (usar 'cosine' o 'euclidean').")
 
-    # Inferencia transductiva (1-NN) utilizando el método predict del MotorJerarquico
+    # Inferencia transductiva (1-NN) utilizando el metodo predict del MotorJerarquico
     try:
         from src.clustering.hierarchical import MotorJerarquico
     except (ImportError, ModuleNotFoundError):
@@ -802,6 +801,16 @@ def generar_figura_matriz_confusion_heatmap(
     Genera la Figura 10 del informe: Heat-Map intuitivo de las Matrices de Confusión
     (Class-to-Cluster) en Train y Test según lo exigido explícitamente en la rúbrica.
     Muestra recuentos absolutos y porcentajes normalizados por fila (Recall / Cobertura real).
+
+    Pre-condiciones:
+    - matriz_train, matriz_test: array-like o numpy.ndarray bidimensionales representando matrices cuadradas de confusión.
+    - nombres_clases: lista opcional de strings. Su longitud debe coincidir con la dimensión de las matrices (asume 5 clases clínicas por defecto).
+    - carpeta_salida: string con la ruta de destino (el directorio se crea automáticamente si no existe).
+
+    Post-condiciones:
+    - Guarda físicamente en disco la imagen 'fig10_matriz_confusion_heatmap.png' de forma silenciosa (no bloquea la ejecución).
+    - Imprime en la consola la ruta final del archivo generado.
+    - No devuelve ningún valor explícito (retorna None).
     """
     import textwrap
     os.makedirs(carpeta_salida, exist_ok=True)
@@ -892,7 +901,7 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None, k_max=None):
     if carpeta_raiz not in sys.path:
         sys.path.append(carpeta_raiz)
 
-    # 1. Cargar artefactos preprocesados
+    # Cargar artefactos preprocesados
     try:
         vectores_densos = np.load(os.path.join(carpeta_datos, "embeddings_sbert.npy"))
         etiquetas_reales = np.load(os.path.join(carpeta_datos, "etiquetas_reales.npy"))
@@ -913,7 +922,7 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None, k_max=None):
         except (ImportError, ModuleNotFoundError):
             from .clustering.hierarchical import MotorJerarquico
 
-    # 2. Generar figuras de validación interna y dendrograma (Figuras 1 a 5)
+    # Generar figuras de validación interna y dendrograma (Figuras 1 a 5)
     print("\n[1/5] Generando figuras de validación interna y dendrograma jerárquico...")
     generar_graficas_validacion_interna(
         vectores_densos,
@@ -922,13 +931,13 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None, k_max=None):
         carpeta_salida=carpeta_salida,
     )
 
-    # 3. Optimización no supervisada de k
+    # Optimización no supervisada de k
     print("\n[2/5] Optimizando número de clusters no supervisado (búsqueda de picos)...")
     rango_busqueda = range(2, k_max + 1) if k_max is not None else None
     opt_info = optimizar_hiperparametros_internos(matriz_distancias, rango_k=rango_busqueda)
     k_pico_equilibrado = opt_info["mejor_particion_equilibrada"]["k_optimo"] or 15
 
-    # 4. Ajuste del modelo Complete-Link sobre el corpus global
+    # Ajuste del modelo Complete-Link sobre el corpus global
     motor = MotorJerarquico(tipo_enlace="complete")
     Z_comp = motor.fit(matriz_distancias)
     pred_opt = cortar_arbol(Z_comp, n_clusters=k_pico_equilibrado)
@@ -941,7 +950,7 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None, k_max=None):
     except Exception:
         pass
 
-    # 5. Generar Codebook, Mapa PCA de Centroides y Curva Externa (Figuras 6, 7 y 8)
+    # Generar Codebook, Mapa PCA de Centroides y Curva Externa (Figuras 6, 7 y 8)
     print("\n[3/5] Extrayendo Codebook de centroides y figuras semánticas...")
     extraer_y_visualizar_centroides_textuales_scratch(
         vectores_densos,
@@ -953,10 +962,10 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None, k_max=None):
         k_max=k_max,
     )
 
-    # Generar también proyección t-SNE
+    # Generar proyección t-SNE
     visualizar_tsne_clusters(vectores_densos, pred_opt, ruta_salida=os.path.join(carpeta_salida, "fig6b_mapa_tsne_clusters.png"))
 
-    # 6. PROTOCOLO HOLDOUT FORMAL: Train (80%, N1=400) vs Test (20%, N2=100)
+    # PROTOCOLO HOLDOUT FORMAL: Train (80%, N1=400) vs Test (20%, N2=100)
     print("\n[4/5] Ejecutando Protocolo Formal Holdout (Train 80% / Test 20%)...")
     n_train = int(0.8 * len(vectores_densos))
     X_train, X_test = vectores_densos[:n_train], vectores_densos[n_train:]
@@ -1011,7 +1020,7 @@ def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None, k_max=None):
     print(f"{'Macro Avg':<15} | {clf_test['precision_macro']:6.4f}   | {clf_test['recall_macro']:6.4f}   | {clf_test['f1_macro']:6.4f}   | {len(y_test):4d}")
     print(f"{'Weighted Avg':<15} | {clf_test['precision_weighted']:6.4f}   | {clf_test['recall_weighted']:6.4f}   | {clf_test['f1_weighted']:6.4f}   | {len(y_test):4d}")
 
-    # Generar la Figura 10: Heat-Map intuitivo de las Matrices de Confusión (Train y Test)
+    # Generar Heat-Map intuitivo de las Matrices de Confusión (Train y Test)
     print("\n[5/5] Generando Figura 10 (Heat-Map dual de Matriz de Confusión Train vs Test)...")
     generar_figura_matriz_confusion_heatmap(
         clf_train["matriz_confusion"],

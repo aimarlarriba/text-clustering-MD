@@ -193,7 +193,7 @@ def main():
 
         try:
             X_train = np.load(os.path.join(args.salida, "embeddings_sbert.npy"))
-            # Corrección de fuga: se cargan los clústeres inferidos, no el ground truth clínico
+            # se cargan los clústeres inferidos, no el ground truth clínico
             pred_file = os.path.join(args.salida, "etiquetas_predichas.npy")
             if os.path.exists(pred_file):
                 y_train = np.load(pred_file)
@@ -220,7 +220,7 @@ def main():
 
     print("=== Pipeline de Embeddings y Matrices de Proximidad ===")
 
-    # 1. Cargar textos
+    # Cargar textos
     textos, etiquetas_reales = cargar_datos(args.csv, args.n_muestras)
     N = len(textos)
     if N == 0:
@@ -228,14 +228,14 @@ def main():
         return
     print(f"Total de posts a procesar: {N}")
 
-    # 2. Generar embeddings
+    # Generar embeddings
     print(f"Generando embeddings con {args.modelo}...")
     t0 = time.time()
     X = generar_embeddings(textos, nombre_modelo=args.modelo, normalizar=True)
     t_emb = time.time() - t0
     print(f"Embeddings listos en {t_emb:.2f}s (forma: {X.shape})")
 
-    # 3. Calcular matrices de proximidad scratch en NumPy
+    # Calcular matrices de proximidad scratch en NumPy
     print("Calculando matrices de distancia en scratch...")
     t0 = time.time()
     D_cos = calcular_matriz_distancias_scratch(X, metrica="cosine")
@@ -248,7 +248,7 @@ def main():
     print(f"Matriz Coseno calculada en {t_cos:.4f}s")
     print(f"Matriz Euclídea calculada en {t_euc:.4f}s")
 
-    # 4. Comparativa de distancias para el informe
+    # Comparativa de distancias
     print("Generando comparativa estadística de métricas...")
     ruta_grafico = os.path.join(args.salida, "comparativa_distancias.png")
     stats = comparar_espacios_metricos(X, D_cos, D_euc, ruta_grafico=ruta_grafico)
@@ -257,11 +257,11 @@ def main():
     print(f"Correlación Pearson: {stats['corr_pearson']:.4f}")
     print(f"Verificación formal d_E = sqrt(2*d_cos) -> Error máx: {stats['error_formal_max_euc_sqrt2cos']:.2e}")
 
-    # 5. Profiling cuantitativo de tiempo y memoria (O(N^2))
+    # Profiling cuantitativo de tiempo y memoria (O(N^2))
     print("Ejecutando profiling empírico de complejidad temporal y memoria...")
     profiling = perfilar_coste_computacional(X, lista_n=(100, 200, 300, 400, 500))
 
-    # Guardar métricas cuantitativas para el informe
+    # Guardar métricas cuantitativas
     informe_cuantitativo = {
         "estadisticas_espacios_metricos": stats,
         "profiling_complejidad_computacional": profiling
@@ -269,7 +269,7 @@ def main():
     with open(os.path.join(args.salida, "metricas_espacios_y_profiling.json"), "w", encoding="utf-8") as f:
         json.dump(informe_cuantitativo, f, ensure_ascii=False, indent=2)
 
-    # 6. Guardar archivos serializados para las fases de clustering y evaluación
+    # Guardar archivos serializados para las fases de clustering y evaluación
     print("Guardando archivos serializados...")
     guardar_embeddings(X, os.path.join(args.salida, "embeddings_sbert.npy"))
     guardar_matriz_distancias(D_cos, os.path.join(args.salida, "matriz_distancias_cosine.npy"))
