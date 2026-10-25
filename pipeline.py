@@ -128,11 +128,19 @@ def cargar_datos(ruta_csv: str = "data/500_Reddit_users_posts_labels.csv", n_mue
 
         duplicados = df_sub.duplicated(subset=[col_texto]).sum()
         missing = df_sub[col_texto].isna().sum()
-        palabras_unicas = len(set(" ".join(textos).lower().split()))
+
+        # métricas cuantitativas
+        longitudes = [len(str(t).split()) for t in textos]
+        rango_min, rango_med, rango_max = np.min(longitudes), np.median(longitudes), np.max(longitudes)
+
+        vocabulario = set(" ".join(textos).lower().split())
+        palabras_oov = sum(1 for w in vocabulario if not w.isalpha())
+        tasa_oov = (palabras_oov / len(vocabulario) * 100) if len(vocabulario) > 0 else 0.0
 
         print(f"Posts cargados: {len(textos)} | Distribución de clases: {distribucion}")
-        print(
-            f"Duplicados detectados: {duplicados} | Missing values: {missing} | Talla vocabulario (aprox): {palabras_unicas}")
+        print(f"Duplicados: {duplicados} | Missing values: {missing} | Talla vocabulario: {len(vocabulario)}")
+        print(f"Rango de palabras por post -> Mín: {rango_min}, Mediana: {rango_med:.1f}, Máx: {rango_max}")
+        print(f"Tasa de palabras fuera de vocabulario (OOV): {tasa_oov:.2f}%")
     else:
         etiquetas = np.zeros(len(textos), dtype=int)
 
