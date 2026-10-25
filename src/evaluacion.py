@@ -708,8 +708,22 @@ def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_e
     Pre-condiciones: vector_nuevo (D,), vectores_entrenamiento (N, D), etiquetas_entrenamiento (N,), textos_entrenamiento lista tamaño N, k entero > 0.
     Post-condiciones: Imprime los K vecinos intra-cluster y devuelve el ID del clúster (int).
     """
+    import numpy as np
+    
+    # 1. Ajuste metodológico: Forzar cálculo geométrico y uso del método predict del motor
+    try:
+        from src.clustering.hierarchical import MotorJerarquico
+    except (ImportError, ModuleNotFoundError):
+        try:
+            from clustering.hierarchical import MotorJerarquico
+        except (ImportError, ModuleNotFoundError):
+            from .clustering.hierarchical import MotorJerarquico
+
     distancias_globales = np.linalg.norm(vectores_entrenamiento - vector_nuevo, axis=1)
-    cluster_asignado = etiquetas_entrenamiento[np.argmin(distancias_globales)]
+    
+    # Instanciamos el motor y usamos tu método .predict() (asumiendo matriz de test 1xN)
+    motor = MotorJerarquico()
+    cluster_asignado = int(motor.predict(distancias_globales.reshape(1, -1), etiquetas_entrenamiento)[0])
 
     indices_cluster = np.where(etiquetas_entrenamiento == cluster_asignado)[0]
     vectores_filtrados = vectores_entrenamiento[indices_cluster]
@@ -722,7 +736,7 @@ def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_e
     for i, idx in enumerate(indices_cercanos):
         print(f"  {i + 1}. [Distancia: {distancias_locales[idx]:.4f}] -> \"{textos_filtrados[idx]}\"")
 
-    return int(cluster_asignado)
+    return cluster_asignado
 
 
 def ejecutar_evaluacion(carpeta_datos, carpeta_salida, k_max=None):
