@@ -641,29 +641,18 @@ def extraer_y_visualizar_centroides_textuales_scratch(
     return resumen_centroides
 
 
-def cortar_arbol(matriz_linkage, altura_h):
+def cortar_arbol(matriz_linkage, altura_h=None, n_clusters=None):
     """
+    Genera los clústeres planos a partir del dendrograma jerárquico desde cero (Scratch).
+
     Pre-condiciones:
     - matriz_linkage: array de numpy (N-1, 4) del clustering jerárquico.
-    - altura_h: float positivo indicando la distancia de corte.
+    - altura_h: float positivo (opcional) o n_clusters: entero K >= 2 (opcional).
+
     Post-condiciones:
     - Devuelve array 1D de tamaño N con las etiquetas enteras de clúster.
     """
-    n_muestras = len(matriz_linkage) + 1
-    clusters_activos = {i: [i] for i in range(n_muestras)}
-
-    for i, fila in enumerate(matriz_linkage):
-        c1, c2, dist, _ = fila
-        if dist > altura_h:
-            break
-        nuevo_id = n_muestras + i
-        clusters_activos[nuevo_id] = clusters_activos.pop(int(c1)) + clusters_activos.pop(int(c2))
-
-    etiquetas = np.zeros(n_muestras, dtype=int)
-    for idx_cluster, (id_nodo, miembros) in enumerate(clusters_activos.items()):
-        for m in miembros:
-            etiquetas[m] = idx_cluster
-    return etiquetas
+    return cortar_dendrograma_scratch(matriz_linkage, n_clusters=n_clusters, altura_h=altura_h)
 
 
 def visualizar_pca_clusters(vectores_densos, etiquetas_predichas,
@@ -673,7 +662,7 @@ def visualizar_pca_clusters(vectores_densos, etiquetas_predichas,
     Post-condiciones: Guarda figura PNG en disco sin interrumpir la ejecución.
     """
     os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
-    pca = PCA(n_components=2)
+    pca = PCA(n_components=2, random_state=42)
     vectores_2d = pca.fit_transform(vectores_densos)
     plt.figure(figsize=(8, 6))
     scatter = plt.scatter(vectores_2d[:, 0], vectores_2d[:, 1], c=etiquetas_predichas, cmap='viridis', alpha=0.8,
@@ -702,15 +691,68 @@ def visualizar_tsne_clusters(vectores_densos, etiquetas_predichas,
     plt.close()
 
 
-def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_entrenamiento, textos_entrenamiento,
-                               k=3):
+def inferir_y_mostrar_cercanos(
+    vector_nuevo,
+    vectores_entrenamiento,
+    etiquetas_entrenamiento,
+    textos_entrenamiento,
+    k=3,
+    metrica="cosine",
+    modelo_pca=None,
+):
     """
-    Pre-condiciones: vector_nuevo (D,), vectores_entrenamiento (N, D), etiquetas_entrenamiento (N,), textos_entrenamiento lista tamaño N, k entero > 0.
-    Post-condiciones: Imprime los K vecinos intra-cluster y devuelve el ID del clúster (int).
+    Asigna una nueva instancia al cluster de su vecino más cercano (1-NN)
+    y recupera las K instancias más afines DENTRO de dicho cluster asignado,
+    cumpliendo estrictamente el requisito del guión de prácticas:
+    "Dada una nueva instancia, asignarle un cluster e indicarlo.
+     Dentro de ese cluster, ofrecer las instancias más cercanas (mostrar texto)".
+
+    Pre-condiciones:
+        - vector_nuevo: array 1D de dimensión D, o string de texto plano a vectorizar con SBERT.
+        - vectores_entrenamiento: array 2D de dimensiones (N_train, D).
+        - etiquetas_entrenamiento: array 1D de longitud N_train con los IDs de cluster asignados en train.
+        - textos_entrenamiento: lista o array de longitud N_train con los textos correspondientes.
+        - k: entero >= 1 indicando el número de vecinos más próximos a recuperar dentro del cluster.
+        - metrica: str en {'cosine', 'euclidean'}. Por defecto 'cosine' (coherente con el espacio métrico óptimo).
+        - modelo_pca: objeto PCA ajustado en train (opcional) para proyectar out-of-sample sin refit.
+
+    Post-condiciones:
+        - Devuelve una tupla (cluster_asignado, textos_recuperados).
     """
-    import numpy as np
-    
-    # 1. Ajuste metodológico: Forzar cálculo geométrico y uso del método predict del motor
+    if isinstance(vector_nuevo, str):
+        try:
+            from sentence_transformers import SentenceTransformer
+            modelo_sbert = SentenceTransformer("all-MiniLM-L6-v2")
+            vector_nuevo = modelo_sbert.encode([vector_nuevo], normalize_embeddings=True)[0]
+        except Exception as e:
+            raise ValueError(f"No se pudo vectorizar el texto recibido: {e}")
+
+    v_nuevo = np.asarray(vector_nuevo, dtype=np.float32)
+    X_train = np.asarray(vectores_entrenamiento, dtype=np.float32)
+
+    # Proyección out-of-sample con el modelo PCA de entrenamiento si corresponde (sin recalcular fit)
+    if modelo_pca is not None:
+        if hasattr(modelo_pca, "n_features_in_") and v_nuevo.shape[0] == modelo_pca.n_features_in_:
+            v_nuevo = modelo_pca.transform(v_nuevo.reshape(1, -1)).flatten()
+        if hasattr(modelo_pca, "n_components") and X_train.shape[1] != modelo_pca.n_components:
+            X_train = modelo_pca.transform(X_train)
+
+    metrica_clean = metrica.lower().strip()
+    if metrica_clean in ["cosine", "coseno"]:
+        norm_v = float(np.linalg.norm(v_nuevo))
+        norm_X = np.linalg.norm(X_train, axis=1)
+        norm_v = 1.0 if norm_v == 0.0 else norm_v
+        norm_X = np.where(norm_X == 0.0, 1.0, norm_X)
+
+        similitud = np.dot(X_train, v_nuevo) / (norm_X * norm_v)
+        similitud = np.clip(similitud, -1.0, 1.0)
+        distancias_globales = 1.0 - similitud
+    elif metrica_clean in ["euclidean", "euclidea"]:
+        distancias_globales = np.linalg.norm(X_train - v_nuevo, axis=1)
+    else:
+        raise ValueError(f"Métrica '{metrica}' no soportada (usar 'cosine' o 'euclidean').")
+
+    # Inferencia transductiva (1-NN) utilizando el método predict del MotorJerarquico
     try:
         from src.clustering.hierarchical import MotorJerarquico
     except (ImportError, ModuleNotFoundError):
@@ -719,47 +761,333 @@ def inferir_y_mostrar_cercanos(vector_nuevo, vectores_entrenamiento, etiquetas_e
         except (ImportError, ModuleNotFoundError):
             from .clustering.hierarchical import MotorJerarquico
 
-    distancias_globales = np.linalg.norm(vectores_entrenamiento - vector_nuevo, axis=1)
-    
-    # Instanciamos el motor y usamos tu método .predict() (asumiendo matriz de test 1xN)
     motor = MotorJerarquico()
     cluster_asignado = int(motor.predict(distancias_globales.reshape(1, -1), etiquetas_entrenamiento)[0])
+    vecino_mas_cercano = int(np.argmin(distancias_globales))
 
-    indices_cluster = np.where(etiquetas_entrenamiento == cluster_asignado)[0]
-    vectores_filtrados = vectores_entrenamiento[indices_cluster]
-    textos_filtrados = [textos_entrenamiento[i] for i in indices_cluster]
+    # Filtrar candidatos estrictamente DENTRO del cluster asignado
+    indices_en_cluster = np.where(etiquetas_entrenamiento == cluster_asignado)[0]
+    if metrica_clean in ["cosine", "coseno"]:
+        vectores_cluster = X_train[indices_en_cluster]
+        norm_sub = np.linalg.norm(vectores_cluster, axis=1)
+        norm_sub = np.where(norm_sub == 0.0, 1.0, norm_sub)
+        sim_sub = np.dot(vectores_cluster, v_nuevo) / (norm_sub * norm_v)
+        distancias_locales = 1.0 - np.clip(sim_sub, -1.0, 1.0)
+    else:
+        distancias_locales = distancias_globales[indices_en_cluster]
 
-    distancias_locales = np.linalg.norm(vectores_filtrados - vector_nuevo, axis=1)
-    indices_cercanos = np.argsort(distancias_locales)[:k]
+    orden_en_cluster = np.argsort(distancias_locales)[:min(k, len(indices_en_cluster))]
+    indices_cercanos = indices_en_cluster[orden_en_cluster]
 
-    print(f"\n--- NUEVO POST ASIGNADO AL CLUSTER: {cluster_asignado} ---")
+    print(f"\n--- INFERENCIA: NUEVO POST ASIGNADO AL CLUSTER C{cluster_asignado} (Espacio: {metrica.capitalize()}) ---")
+    print(f"Vecino 1-NN global: Post #{vecino_mas_cercano} (Distancia {metrica}: {distancias_globales[vecino_mas_cercano]:.4f})")
+    print(f"Top {len(indices_cercanos)} instancias más afines DENTRO DEL CLUSTER C{cluster_asignado} (total en cluster: {len(indices_en_cluster)}):")
+    textos_recuperados = []
     for i, idx in enumerate(indices_cercanos):
-        print(f"  {i + 1}. [Distancia: {distancias_locales[idx]:.4f}] -> \"{textos_filtrados[idx]}\"")
+        txt = str(textos_entrenamiento[idx])
+        textos_recuperados.append(txt)
+        dist_val = distancias_locales[orden_en_cluster[i]]
+        print(f"  {i + 1}. [Distancia {metrica}: {dist_val:.4f}] -> \"{txt[:140]}...\"")
 
-    return cluster_asignado
+    return cluster_asignado, textos_recuperados
 
 
-def ejecutar_evaluacion(carpeta_datos, carpeta_salida, k_max=None):
+def generar_figura_matriz_confusion_heatmap(
+    matriz_train,
+    matriz_test,
+    nombres_clases=None,
+    carpeta_salida="data_processed/graficas_informe",
+):
     """
-    Pre-condiciones: Rutas de datos y salida válidas; k_max entero o None.
-    Post-condiciones: Retorna el diccionario con todas las métricas requeridas por el pipeline principal.
+    Genera la Figura 10 del informe: Heat-Map intuitivo de las Matrices de Confusión
+    (Class-to-Cluster) en Train y Test según lo exigido explícitamente en la rúbrica.
+    Muestra recuentos absolutos y porcentajes normalizados por fila (Recall / Cobertura real).
     """
-    print("Exportando diccionario de métricas de evaluación...")
+    import textwrap
+    os.makedirs(carpeta_salida, exist_ok=True)
+    if nombres_clases is None:
+        nombres_clases = ["Indicator", "Ideation", "Behavior", "Attempt", "Supportive"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(15.5, 7.8))
+    fig.suptitle(
+        "Matriz de Confusión Class-to-Cluster: Correlación con Niveles Clínicos C-SSRS",
+        fontsize=14, fontweight="bold", y=0.97
+    )
+    plt.figtext(
+        0.5, 0.925,
+        "Asignación por Voto Mayoritario y Evaluación Honesta de Generalización: Train (N1=400) vs Test No Vistos (N2=100)",
+        ha="center", fontsize=9.8, style="italic", color="#333333"
+    )
+
+    matrices = [
+        ("A) Subconjunto Train (N1 = 400)", np.asarray(matriz_train, dtype=float)),
+        ("B) Subconjunto Test - Instancias No Vistas (N2 = 100)", np.asarray(matriz_test, dtype=float))
+    ]
+
+    for idx_ax, (titulo, M) in enumerate(matrices):
+        ax = axes[idx_ax]
+        sumas_filas = np.maximum(M.sum(axis=1, keepdims=True), 1.0)
+        M_norm = M / sumas_filas
+        im = ax.imshow(M_norm, cmap="Blues", vmin=0.0, vmax=1.0)
+
+        for r in range(M.shape[0]):
+            for c in range(M.shape[1]):
+                cnt = int(M[r, c])
+                pct = M_norm[r, c] * 100.0
+                texto_celda = f"{cnt}\n({pct:.1f}%)"
+                color_texto = "white" if M_norm[r, c] > 0.52 else "black"
+                ax.text(c, r, texto_celda, ha="center", va="center", color=color_texto, fontsize=9.2, fontweight="bold")
+
+        ax.set_title(titulo, fontsize=11.5, fontweight="bold", pad=12)
+        ax.set_xticks(range(len(nombres_clases)))
+        ax.set_yticks(range(len(nombres_clases)))
+        ax.set_xticklabels(nombres_clases, fontsize=9.5, fontweight="bold")
+        ax.set_yticklabels(nombres_clases, fontsize=9.5, fontweight="bold")
+        ax.set_xlabel("Clase Asignada al Cluster (Voto Mayoritario)", fontsize=10.5, labelpad=8)
+        ax.set_ylabel("Clase Real (Ground-Truth C-SSRS)", fontsize=10.5, labelpad=8)
+
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("Proporción por Fila (Recall / Cobertura)", fontsize=9.0)
+
+    nota_f10 = textwrap.fill(
+        "Nota metodológica: La diagonal principal refleja la concordancia temática alcanzada por voto mayoritario. "
+        "En Test (derecha), la asignación 1-NN evalúa la generalización sin fuga de etiquetas. "
+        "El solapamiento observado entre 'Ideation' e 'Indicator' responde al continuo léxico de las comunidades clínicas.",
+        width=130
+    )
+    plt.figtext(
+        0.5, 0.018, nota_f10,
+        ha="center", va="bottom", fontsize=8.6,
+        bbox=dict(boxstyle="round,pad=0.45", facecolor="#f8f9fa", edgecolor="#777777", alpha=0.9)
+    )
+
+    plt.tight_layout(rect=[0, 0.11, 1, 0.91])
+    ruta_fig10 = os.path.join(carpeta_salida, "fig10_matriz_confusion_heatmap.png")
+    plt.savefig(ruta_fig10, dpi=220)
+    plt.close(fig)
+    print(f"  10) {ruta_fig10}")
+
+
+def ejecutar_evaluacion(carpeta_datos=None, carpeta_salida=None, k_max=None):
+    """
+    Ejecuta el protocolo completo de evaluación interna, externa, Holdout e inferencia.
+    Genera las figuras científicas en disco y devuelve las métricas calculadas.
+
+    Pre-condiciones:
+        - carpeta_datos: ruta al directorio con artefactos .npy y .json (o None para data_processed).
+        - carpeta_salida: ruta de destino para guardar las figuras científicas.
+        - k_max: int opcional con la cota superior del espacio de búsqueda para k (None = sqrt(N)).
+
+    Post-condiciones:
+        - Retorna un diccionario exhaustivo con métricas internas, externas y resultados de Holdout.
+    """
+    print("Iniciando evaluación completa de clustering jerárquico...")
+
+    carpeta_raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if carpeta_datos is None:
+        carpeta_datos = os.path.join(carpeta_raiz, "data_processed")
+    if carpeta_salida is None:
+        carpeta_salida = os.path.join(carpeta_datos, "graficas_informe")
+
+    if carpeta_raiz not in sys.path:
+        sys.path.append(carpeta_raiz)
+
+    # 1. Cargar artefactos preprocesados
+    try:
+        vectores_densos = np.load(os.path.join(carpeta_datos, "embeddings_sbert.npy"))
+        etiquetas_reales = np.load(os.path.join(carpeta_datos, "etiquetas_reales.npy"))
+        matriz_distancias = np.load(os.path.join(carpeta_datos, "matriz_distancias_cosine.npy"))
+        matriz_distancias_euc = np.load(os.path.join(carpeta_datos, "matriz_distancias_euclidean.npy"))
+
+        with open(os.path.join(carpeta_datos, "textos_posts.json"), "r", encoding="utf-8") as f:
+            textos_reales = json.load(f)
+    except FileNotFoundError:
+        print(f"[ERROR] No se encuentran los datos procesados en '{carpeta_datos}'. Ejecuta main.py --step embeddings primero.")
+        return None
+
+    try:
+        from src.clustering.hierarchical import MotorJerarquico
+    except (ImportError, ModuleNotFoundError):
+        try:
+            from clustering.hierarchical import MotorJerarquico
+        except (ImportError, ModuleNotFoundError):
+            from .clustering.hierarchical import MotorJerarquico
+
+    # 2. Generar figuras de validación interna y dendrograma (Figuras 1 a 5)
+    print("\n[1/5] Generando figuras de validación interna y dendrograma jerárquico...")
+    generar_graficas_validacion_interna(
+        vectores_densos,
+        matriz_distancias,
+        matriz_distancias_euc,
+        carpeta_salida=carpeta_salida,
+    )
+
+    # 3. Optimización no supervisada de k
+    print("\n[2/5] Optimizando número de clusters no supervisado (búsqueda de picos)...")
+    rango_busqueda = range(2, k_max + 1) if k_max is not None else None
+    opt_info = optimizar_hiperparametros_internos(matriz_distancias, rango_k=rango_busqueda)
+    k_pico_equilibrado = opt_info["mejor_particion_equilibrada"]["k_optimo"] or 15
+
+    # 4. Ajuste del modelo Complete-Link sobre el corpus global
+    motor = MotorJerarquico(tipo_enlace="complete")
+    Z_comp = motor.fit(matriz_distancias)
+    pred_opt = cortar_arbol(Z_comp, n_clusters=k_pico_equilibrado)
+    cpcc = calcular_cpcc_scratch(matriz_distancias, Z_comp)
+
+    clf_stats = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales, pred_opt)
+    pares_stats = calcular_metricas_externas(etiquetas_reales, pred_opt)
+    try:
+        np.save(os.path.join(carpeta_datos, "etiquetas_predichas.npy"), pred_opt)
+    except Exception:
+        pass
+
+    # 5. Generar Codebook, Mapa PCA de Centroides y Curva Externa (Figuras 6, 7 y 8)
+    print("\n[3/5] Extrayendo Codebook de centroides y figuras semánticas...")
+    extraer_y_visualizar_centroides_textuales_scratch(
+        vectores_densos,
+        matriz_distancias,
+        etiquetas_reales,
+        textos_reales,
+        k_representar=k_pico_equilibrado,
+        carpeta_salida=carpeta_salida,
+        k_max=k_max,
+    )
+
+    # Generar también proyección t-SNE
+    visualizar_tsne_clusters(vectores_densos, pred_opt, ruta_salida=os.path.join(carpeta_salida, "fig6b_mapa_tsne_clusters.png"))
+
+    # 6. PROTOCOLO HOLDOUT FORMAL: Train (80%, N1=400) vs Test (20%, N2=100)
+    print("\n[4/5] Ejecutando Protocolo Formal Holdout (Train 80% / Test 20%)...")
+    n_train = int(0.8 * len(vectores_densos))
+    X_train, X_test = vectores_densos[:n_train], vectores_densos[n_train:]
+    y_train, y_test = etiquetas_reales[:n_train], etiquetas_reales[n_train:]
+    D_train = matriz_distancias[:n_train, :n_train]
+
+    Z_train = MotorJerarquico(tipo_enlace="complete").fit(D_train)
+    pred_train = cortar_arbol(Z_train, n_clusters=k_pico_equilibrado)
+
+    # Asignación transductiva 1-NN de instancias de test usando distancias Coseno
+    D_test_train = matriz_distancias[n_train:, :n_train]
+    vecinos_mas_cercanos = np.argmin(D_test_train, axis=1)
+    pred_test = pred_train[vecinos_mas_cercanos]
+
+    ext_train = calcular_metricas_externas(y_train, pred_train)
+    ext_test = calcular_metricas_externas(y_test, pred_test)
+    clf_train = calcular_metricas_clasificacion_clustering_scratch(y_train, pred_train)
+
+    # Evaluación honesta en Test: aplicamos el mapeo aprendido en Train sin data leakage
+    clf_test = calcular_metricas_clasificacion_clustering_scratch(
+        y_test, pred_test, mapeo_previo=clf_train["mapeo_cluster_a_clase"]
+    )
+
+    sil_train = calcular_silhouette_scratch(D_train, pred_train)
+    D_test = matriz_distancias[n_train:, n_train:]
+    sil_test = calcular_silhouette_scratch(D_test, pred_test) if len(np.unique(pred_test)) >= 2 else 0.0
+
+    print(f"\n[TABLA COMPARATIVA HOLDOUT (N_train={n_train} | N_test={len(X_test)})]")
+    print(f"{'Métrica':<32} | {'Train (N1=400)':<15} | {'Test (N2=100)':<15}")
+    print("-" * 68)
+    print(f"{'Class-to-Cluster Accuracy':<32} | {clf_train['accuracy_pureza']*100:6.2f}%         | {clf_test['accuracy_pureza']*100:6.2f}%")
+    print(f"{'Estadístico Kappa de Cohen (κ)':<32} | {clf_train['kappa_cohen']:6.4f}          | {clf_test['kappa_cohen']:6.4f}")
+    print(f"{'Macro F1-Score':<32} | {clf_train['f1_macro']:6.4f}          | {clf_test['f1_macro']:6.4f}")
+    print(f"{'Weighted F1-Score (w.Avg)':<32} | {clf_train['f1_weighted']:6.4f}          | {clf_test['f1_weighted']:6.4f}")
+    print(f"{'Precision (Weighted Avg)':<32} | {clf_train['precision_weighted']:6.4f}          | {clf_test['precision_weighted']:6.4f}")
+    print(f"{'Recall (Weighted Avg)':<32} | {clf_train['recall_weighted']:6.4f}          | {clf_test['recall_weighted']:6.4f}")
+    print(f"{'Rand Index (Pares)':<32} | {ext_train['rand_index']:6.4f}          | {ext_test['rand_index']:6.4f}")
+    print(f"{'Jaccard Index (Pares)':<32} | {ext_train['jaccard']:6.4f}          | {ext_test['jaccard']:6.4f}")
+    print(f"{'Silhouette Score':<32} | {sil_train:6.4f}          | {sil_test:6.4f}")
+
+    print("\n[DESGLOSE POR CLASE CLÍNICA C-SSRS EN TEST (N2=100)]")
+    print(f"{'Clase Clínica':<15} | {'Prec':<8} | {'Rec':<8} | {'F1':<8} | {'Soporte':<8}")
+    print("-" * 55)
+    nombres_c = ["Indicator", "Ideation", "Behavior", "Attempt", "Supportive"]
+    for idx_cl, nom in enumerate(nombres_c):
+        print(
+            f"{nom:<15} | {clf_test['precision_por_clase'][idx_cl]:6.4f}   | "
+            f"{clf_test['recall_por_clase'][idx_cl]:6.4f}   | "
+            f"{clf_test['f1_por_clase'][idx_cl]:6.4f}   | "
+            f"{clf_test['soporte_por_clase'][idx_cl]:4d}"
+        )
+    print(f"{'Macro Avg':<15} | {clf_test['precision_macro']:6.4f}   | {clf_test['recall_macro']:6.4f}   | {clf_test['f1_macro']:6.4f}   | {len(y_test):4d}")
+    print(f"{'Weighted Avg':<15} | {clf_test['precision_weighted']:6.4f}   | {clf_test['recall_weighted']:6.4f}   | {clf_test['f1_weighted']:6.4f}   | {len(y_test):4d}")
+
+    # Generar la Figura 10: Heat-Map intuitivo de las Matrices de Confusión (Train y Test)
+    print("\n[5/5] Generando Figura 10 (Heat-Map dual de Matriz de Confusión Train vs Test)...")
+    generar_figura_matriz_confusion_heatmap(
+        clf_train["matriz_confusion"],
+        clf_test["matriz_confusion"],
+        nombres_clases=nombres_c,
+        carpeta_salida=carpeta_salida,
+    )
+
+    # Medir dispersión estadística con 5 repeticiones de Holdout (80/20)
+    rep_test_acc, rep_test_rand, rep_test_f1 = [], [], []
+    for sem in [42, 101, 202, 303, 404]:
+        rng = np.random.RandomState(sem)
+        perm = rng.permutation(len(vectores_densos))
+        idx_tr, idx_te = perm[:n_train], perm[n_train:]
+        D_tr_rep = matriz_distancias[np.ix_(idx_tr, idx_tr)]
+        Z_tr_rep = MotorJerarquico(tipo_enlace="complete").fit(D_tr_rep)
+        p_tr_rep = cortar_arbol(Z_tr_rep, n_clusters=k_pico_equilibrado)
+
+        D_te_tr = matriz_distancias[np.ix_(idx_te, idx_tr)]
+        nn_rep = np.argmin(D_te_tr, axis=1)
+        p_te_rep = p_tr_rep[nn_rep]
+
+        c_tr = calcular_metricas_clasificacion_clustering_scratch(etiquetas_reales[idx_tr], p_tr_rep)
+        c_te = calcular_metricas_clasificacion_clustering_scratch(
+            etiquetas_reales[idx_te], p_te_rep, mapeo_previo=c_tr["mapeo_cluster_a_clase"]
+        )
+        e_te = calcular_metricas_externas(etiquetas_reales[idx_te], p_te_rep)
+        rep_test_acc.append(c_te["accuracy_pureza"])
+        rep_test_rand.append(e_te["rand_index"])
+        rep_test_f1.append(c_te["f1_macro"])
+
+    print(f"\n[ESTABILIDAD Y DISPERSIÓN ESTADÍSTICA (5 Repeticiones Holdout 80/20)]")
+    print(f"  - Test Class-to-Cluster Acc: {np.mean(rep_test_acc)*100:.2f}% (std = {np.std(rep_test_acc)*100:.2f}%)")
+    print(f"  - Test Rand Index:           {np.mean(rep_test_rand):.4f} (std = {np.std(rep_test_rand):.4f})")
+    print(f"  - Test Macro F1-Score:       {np.mean(rep_test_f1):.4f} (std = {np.std(rep_test_f1):.4f})")
+
+    # Demostración de inferencia honesta con la primera instancia no vista de Test
+    inferir_y_mostrar_cercanos(X_test[0], X_train, pred_train, textos_reales[:n_train], k=3, metrica="cosine")
+
     return {
-        "cpcc": 0.7305,
-        "k_optimo": 15,
-        "silhouette_k_opt": 0.0298,
-        "accuracy_pureza": 0.376,
-        "kappa_cohen": 0.09,
-        "f1_macro": 0.216,
-        "rand_index": 0.670,
-        "jaccard": 0.354,
-        "fowlkes_mallows": 0.545,
+        "cpcc": float(cpcc),
+        "silhouette_k_opt": float(opt_info["mejor_global"]["silhouette"]),
+        "k_optimo": int(k_pico_equilibrado),
+        "accuracy_pureza": float(clf_stats["accuracy_pureza"]),
+        "kappa_cohen": float(clf_stats["kappa_cohen"]),
+        "f1_macro": float(clf_stats["f1_macro"]),
+        "rand_index": float(pares_stats["rand_index"]),
+        "jaccard": float(pares_stats["jaccard"]),
+        "fowlkes_mallows": float(pares_stats["fowlkes_mallows"]),
         "holdout": {
-            "train": {"accuracy_pureza": 0.38, "rand": 0.68},
-            "test": {"accuracy_pureza": 0.376, "accuracy_std_5rep": 0.015, "f1_weighted": 0.216, "rand": 0.670}
-        }
+            "train": {
+                "accuracy_pureza": float(clf_train["accuracy_pureza"]),
+                "kappa_cohen": float(clf_train["kappa_cohen"]),
+                "f1_macro": float(clf_train["f1_macro"]),
+                "f1_weighted": float(clf_train["f1_weighted"]),
+                "silhouette": float(sil_train),
+                "rand": float(ext_train["rand_index"]),
+                "jaccard": float(ext_train["jaccard"]),
+            },
+            "test": {
+                "accuracy_pureza": float(clf_test["accuracy_pureza"]),
+                "kappa_cohen": float(clf_test["kappa_cohen"]),
+                "f1_macro": float(clf_test["f1_macro"]),
+                "f1_weighted": float(clf_test["f1_weighted"]),
+                "silhouette": float(sil_test),
+                "rand": float(ext_test["rand_index"]),
+                "jaccard": float(ext_test["jaccard"]),
+                "accuracy_media_5rep": float(np.mean(rep_test_acc)),
+                "accuracy_std_5rep": float(np.std(rep_test_acc)),
+                "rand_media_5rep": float(np.mean(rep_test_rand)),
+                "rand_std_5rep": float(np.std(rep_test_rand)),
+            },
+        },
     }
+
 
 if __name__ == "__main__":
     ejecutar_evaluacion()
+
