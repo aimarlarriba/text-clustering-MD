@@ -1,7 +1,7 @@
 """
 Módulo común del equipo para la Práctica 2 (Clasificación Supervisada).
 Garantiza que todos los integrantes trabajen exactamente con:
-  - La misma partición 70% Train / 15% Dev / 15% Test
+  - La misma partición: 70% Train (350) / 15% Dev (75) / 15% Test (75)
   - La misma semilla (RANDOM_SEED = 42)
   - El mismo corte estratificado (stratify = y)
   - El mismo Baseline (Clustering Jerárquico sobre Embeddings 384D)
@@ -62,7 +62,7 @@ def cargar_particion_oficial_equipo(ruta_csv=RUTA_CSV_DEFECTO, ruta_cache_emb=RU
         indices, y, test_size=0.30, random_state=seed, stratify=y
     )
 
-    # 2º Corte: Dividir el 30% Temporal en 15% Dev (75 muestras) y 15% Test (75 muestras)
+    # 2º Corte: Dividir el 30% Temporal en dos mitades iguales -> 15% Dev (75) y 15% Test (75)
     idx_dev, idx_test, y_dev, y_test = train_test_split(
         idx_temp, y_temp, test_size=0.50, random_state=seed, stratify=y_temp
     )
@@ -126,7 +126,7 @@ class BaselineClusteringJerarquico384D:
 if __name__ == "__main__":
     datos = cargar_particion_oficial_equipo()
     y_tr, y_dev, y_te = datos["y"]
-    print("=== PARTICIÓN OFICIAL DEL EQUIPO (SEED = 42, STRATIFY = Y) ===")
+    print("=== PARTICIÓN OFICIAL DEL EQUIPO 70/15/15 (SEED = 42, STRATIFY = Y) ===")
     print(f"Total Train (70%): {len(y_tr)} | Total Dev (15%): {len(y_dev)} | Total Test (15%): {len(y_te)}")
     df_dist = pd.DataFrame({
         "Train (70%)": pd.Series(y_tr).value_counts(),
